@@ -48,8 +48,8 @@ MAX_LOSS_VAL = 0  # max value that can be lost before auto stop. retrived from c
 PAST_TRADED_CRYPTO = 0  # hold last traded crypto. in case user changed wail crypto is still being held.
 
 # strings
-CONFIG_FILE_PATH = 'res/config.yaml'  # config file location
-BALANCE_DF_PATH = 'res/b_df'
+CONFIG_FILE_PATH = 'bin/res/config.yaml'  # config file location
+BALANCE_DF_PATH = 'bin/res/b_df'
 VERSION = '0.0.2'  # version number
 
 # lists
@@ -632,8 +632,8 @@ def init(top, gui, *args, **kwargs):
     safe_start_thread(AsyncBuildBalance())
     top_level = top
     root = top
-    IND_IMAGE = {'green': PhotoImage(file='res/green_ind_round.png'), 'red': PhotoImage(file='res/red_ind_round.png'),
-                 'yellow': PhotoImage(file='res/yellow_ind_round.png')}
+    IND_IMAGE = {'green': PhotoImage(file='bin/res/green_ind_round.png'), 'red': PhotoImage(file='bin/res/red_ind_round.png'),
+                 'yellow': PhotoImage(file='bin/res/yellow_ind_round.png')}
     refresh()
     trading_loop()
     api_change()
