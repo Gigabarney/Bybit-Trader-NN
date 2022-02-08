@@ -1,0 +1,36 @@
+config:
+  user:
+    api_key:
+    api_secret:
+  settings:
+    def_coin: BTC
+    plot_display: Price
+    balance_plot_period: 60min
+    PMA:
+    - 1
+    - 0
+    - 0
+    - 0
+    - 1
+    BMA:
+    - 1
+    - 0
+    - 0
+    - 0
+    - 1
+    testing: true
+    trade_amount: 1
+    loss_amount: 5
+    loss_period: 10
+    btc_model_path: null
+    eth_model_path: null
+    xrp_model_path: null
+    eos_model_path: null
+    st_count: 1
+    st_count_re: 3
+  stats:
+    total_profit: 5.0322144875
+    last_cap_bal: 5.0322144875
+    last_trade_profit: 0
+    total_prediction: 0
+    correct_prediction: 0
