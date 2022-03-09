@@ -1,7 +1,9 @@
 import os
+import networkTraining
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"  # change tensorflow logs to not show.
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # change tensorflow logs to not show.
 from keras.models import load_model
+from keras import layers
 import gui
 from bin import bybit_data_handler
 import pandas as pd
@@ -10,9 +12,10 @@ import random
 import numpy as np
 from bybit import bybit
 import yaml
-from threading import Thread
+import threading
 import os.path
 import tkinter as tk
+import tkinter.ttk as ttk
 from tkinter import filedialog, PhotoImage
 import time
 import matplotlib.pyplot as plt
@@ -29,68 +32,169 @@ Created by: Eric Kelm
     display your total balance as well as price and moving average of coin prices over different periods
     with a GUI.
 '''
+
+
 # ******************************
-# GLOBAL VARS
-# none
-CLIENT = None  # global var for bybit client
 
-# bool
-IS_TRADING = False  # if se tot trading mode or idle
-HARD_TESTING_LOCK = True  # software lock to prevent accidental trading wail testing
-IS_QUITTING = False  # when set to true to start the shutdown process.
-
-# ints
-DATA_SIZE = 120  # size of data for model. Changed when switching models.
-PREDICTION = -1  # current buy or sell choice. -1 = invalid, 0 = sell, 1 = buy
-TRADING_COUNT, REFRESH_COUNT, TICK = (0, 0, 0)  # counts for gui ticks
-PAST_ACT_BAL = 0  # previous account balance to check value change in balance
-MAX_LOSS_VAL = 0  # max value that can be lost before auto stop. retrived from config.
-PAST_TRADED_CRYPTO = 0  # hold last traded crypto. in case user changed wail crypto is still being held.
-
-# strings
-CONFIG_FILE_PATH = 'bin/res/config.yaml'  # config file location
-BALANCE_DF_PATH = 'bin/res/b_df'
-VERSION = '0.0.2'  # version number
-
-# lists
-SYMBOLS = ['BTC', 'ETH', 'XRP', 'EOS']  # cryptocurrency that can be traded.
-TYPES_OF_PLOTS = ['Price', 'Balance', 'Both']  # types of graphs that can be displayed
-THREAD_POOL = []  # pool of all active threads
-
-# dictionary's
-HAS_POSITION = {'position': 0, 'qty': 0}  # hold last traded position and quantity
-ENT_PRICE = {'price': 0, 'side': 'none'}  # hold price entered in trade and buy or sell side
-BALANCE_PERIODS_DICT = {'10 min': 10, '60 Min': 60, '1 Day': 1440, '10 Day': 14400, '1 Month': 43800, '3 Month': 131400,
-                        '6 Month': 262800, '1 Year': 525600}  # periods in graph that can be displayed
-MOVING_AVG_DICT = {5: 0, 10: 0, 20: 0, 30: 0, 'EMA': 0}  # moving average options for price = 0 off, 1 on
-MOVING_AVG_BAL_DICT = {10: 0, 30: 0}  # moving option averages for price 0 off, 1 on
-
-MODELS = {s: {'model': None, 'args': {'data_size': None, 'ma': [], 'ema_span': [], 'symbols': []}}
-          for s in SYMBOLS}  # loaded model in dict with symbol as key and data manipulation arguments
-
-IND_IMAGE = {'green': None, 'red': None, 'yellow': None}  # indicator images
-START_STOP_TEXT = {'start': 'Start Trading', 'stop': 'Stop Trading',
-                   'loading': 'Loading'}  # diffrent text options for button
-DEFAULT_CONFIG = {'config': {'user': {'api_key': None, 'api_secret': None},
-                             'settings': {'def_coin': SYMBOLS[0], 'plot_display': TYPES_OF_PLOTS[0],
-                                          'balance_plot_period': list(BALANCE_PERIODS_DICT.keys())[0],
-                                          'PMA': [0] * len(MOVING_AVG_DICT.values()),
-                                          'BMA': [0] * len(MOVING_AVG_BAL_DICT.values()),
-                                          'testing': True, 'trade_amount': 1, 'loss_amount': 5, 'loss_period': 10,
-                                          'btc_model_path': None,
-                                          'eth_model_path': None, 'xrp_model_path': None, 'eos_model_path': None,
-                                          'st_count': 0, 'st_count_re': 3},
-                             'stats': {'total_profit': 0, 'last_cap_bal': 0, 'last_trade_profit': 0,
-                                       'total_prediction': 0, 'correct_prediction': 0}}}  # default config file
-
-# misc
-PAST_BAL_LOSS = deque(maxlen=2)  # hold past 2 balance changes
-MAIN_DF = pd.DataFrame()  # dataframe holding the coin price data
-BALANCE_DF = pd.DataFrame()  # dataframe holding the user balance price data
-CONF = DEFAULT_CONFIG  # config file being used. set to default until initialized
+class bcolors:
+    """
+    Terminal colors
+    """
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 
-class AsyncFetchBalance(Thread):
+class Model:
+
+    # data: pd.DataFrame, target: str, seq: int, future_p: int, drop: list, moving_avg: list, ema: list
+
+    def __init__(self, **kwargs):
+        self.location = kwargs.get('location')
+        if self.location is not None and self.location.split('.')[-1] != 'h5':
+            self.location = self.location + '.h5'
+        self.model = kwargs.get('model')
+        if self.location is not None and self.model is None:
+            try:
+                self.model = load_model(self.location)
+            except (FileNotFoundError, OSError):
+                print(bcolors.WARNING + f'WARNING: Model would not be found at: {self.location}')
+                self.location = None
+        self.seq = kwargs.get('seq')
+        self.batch = kwargs.get('batch')
+        self.future_p = kwargs.get('future')
+        self.moving_avg = kwargs.get('moving_avg')
+        self.e_moving_avg = kwargs.get('e_moving_avg')
+        self.drop_symbols = kwargs.get('drop')
+
+    def dump(self):
+        if self.model is not None and self.location is not None:
+            self.model.save(self.location)
+        return {'location': self.location, 'seq': self.seq, 'batch': self.batch, 'future': self.future_p, 'moving_avg': self.moving_avg,
+                'e_moving_avg': self.e_moving_avg, 'drop': self.drop_symbols}
+
+    def move_model(self, n_location):
+        import os
+        os.rename(self.location, n_location)
+        try:
+            os.remove(self.location)
+        except FileNotFoundError:
+            pass
+        self.location = n_location
+
+
+class Config:
+
+    def __init__(self, filepath=None):
+        if filepath is None:
+            c = self.default_config()
+        else:
+            c = self.load_file(filepath)
+        self.c = c
+        self.key = c.get('user').get('api_key')
+        self.secret = c.get('user').get('api_secret')
+
+    def load_file(self, filepath):
+        """
+        Loads config file. If the file is not found replace with a default one and passes values to GUI.
+        If error occurs loading user config file more than 3 times it will be over written with the default config file.
+            Old config file will be renamed to: CONFIG_FILE_NAME.yaml.old
+
+        Exits after config files checked to be corrupt or Incorrect Structure.
+        """
+        global w, PAST_TRADED_CRYPTO
+        global CONFIG_FILE_PATH
+
+        try:
+            with open(filepath, 'r') as file:
+                conf = yaml.safe_load(file)
+        except FileNotFoundError:
+            print(bcolors.FAIL + f'ERROR: Config file not found at: {CONFIG_FILE_PATH}\nReplacing with default config file.')
+            conf = self.default_config()
+            self.write_config(conf)
+        if not self._checksum_config(conf):
+            print(bcolors.WARNING + 'WARNING: Config file has unexpected structure.' + bcolors.ENDC + ' This may cause errors or crashes.\n'
+                                                                                                      f'Reset config file in the settings or modify it at: {CONFIG_FILE_PATH}')
+        return conf
+
+    def _checksum_config(self, conf: dict):
+        """
+        checksum_config(conf: dict)
+        Compares check of config to default config for errors.
+
+        Required Argument:
+            config(dict):   Dictionary to checksum.
+
+        :returns
+            (str)   Hashed dictionary keys.
+        """
+        conf_sum = ''
+        for key in self._rec_config(conf):
+            conf_sum += key
+        default_sum = ''
+        for key in self._rec_config(self.default_config()):
+            default_sum += key
+        return hash(default_sum) == hash(conf_sum)
+
+    def _rec_config(self, dictionary: dict):
+        """
+        rec_config(dictionary: dict)
+
+        Recursively goes through provided dict to get all keys.
+
+        Required Arguments:
+            dictionary(dict): dict to be iterated over.
+        :returns
+            (str)   Keys from dictionary.
+        """
+        for key, value in dictionary.items():
+            if type(value) is dict:
+                yield key
+                yield from self._rec_config(value)
+            else:
+                yield key
+
+    def write_config(self, con=None):
+        global MODELS
+        if con is not None:
+            c = con
+        else:
+            c = self.c
+        for k, v in MODELS.items():
+            if v is not None:
+                c['settings'][f'{k.lower()}_model'] = v.dump()
+            else:
+                c['settings'][f'{k.lower()}_model'] = Model().dump()
+
+        with open(CONFIG_FILE_PATH, 'w') as output:
+            yaml.dump(c, output, sort_keys=False, default_flow_style=False)
+        self.c = c
+        print(bcolors.OKGREEN + 'SAVED')
+
+    @staticmethod
+    def default_config():
+        return {'user': {'api_key': None, 'api_secret': None},
+                'settings': {'def_coin': SYMBOLS[0], 'plot_display': TYPES_OF_PLOTS[0],
+                             'balance_plot_period': list(BALANCE_PERIODS_DICT)[0],
+                             'PMA': [0] * len(MOVING_AVG_DICT.values()),
+                             'BMA': [0] * len(MOVING_AVG_BAL_DICT.values()),
+                             'testing': True, 'trade_amount': 1, 'loss_amount': 5, 'loss_period': 10,
+                             'btc_model': Model().dump(), 'eth_model': Model().dump(),
+                             'xrp_model': Model().dump(), 'eos_model': Model().dump(),
+                             'model_arguments': {'target': 'BTC', 'future': 1, 'size': 1000, 'period': 1,
+                                                 'epochs': 10, 'seq': 128, 'batch': 64, 'ma': [5, 10], 'ema': [4, 8]},
+                             'model_blueprint': [DEFAULT_BLUEPRINT_LAYER] * 3},
+                'stats': {'total_profit': 0, 'last_cap_bal': 0, 'last_trade_profit': 0,
+                          'total_prediction': 0, 'correct_prediction': 0}}  # default config file
+
+
+class AsyncFetchBalance(threading.Thread):
     """
     AsyncFetchBalance(gui, key, secret, tag='fetch_balance')
 
@@ -112,7 +216,7 @@ class AsyncFetchBalance(Thread):
 
     tag = 'fetch_balance'
 
-    def __init__(self, gui: bybit_gui.Toplevel1, key: str, secret: str, tag='fetch_balance'):
+    def __init__(self, gui: gui.Toplevel1, key: str, secret: str, tag='fetch_balance'):
         super().__init__()
         if self.tag != tag:
             self.tag = tag
@@ -132,13 +236,13 @@ class AsyncFetchBalance(Thread):
             balance_usd = {s: (crypto_balances[s] * bybit_exchange.fetch_ticker(f'{s}/USD')['close']) for s in SYMBOLS}
             s_bal = sum(balance_usd.values())
             if PAST_ACT_BAL == 0:
-                change = sum(balance_usd.values()) - int(CONF['config']['stats']['total_profit'])
-                CONF['config']['stats']['total_profit'] += s_bal - CONF['config']['stats']['last_cap_bal']
+                change = sum(balance_usd.values()) - int(CONF.c['stats']['total_profit'])
+                CONF.c['stats']['total_profit'] += s_bal - CONF.c['stats']['last_cap_bal']
             else:
                 change = sum(balance_usd.values()) - PAST_ACT_BAL
-                CONF['config']['stats']['total_profit'] += s_bal - PAST_ACT_BAL
+                CONF.c['stats']['total_profit'] += s_bal - PAST_ACT_BAL
             PAST_ACT_BAL = s_bal
-            CONF['config']['stats']['last_cap_bal'] = s_bal
+            CONF.c['stats']['last_cap_bal'] = s_bal
             data = [[int(time.time() - (time.time() % 60)), s_bal]]
             if len(BALANCE_DF.index) == 0:
                 BALANCE_DF = pd.DataFrame(data, columns=['time', 'balance'])
@@ -151,7 +255,7 @@ class AsyncFetchBalance(Thread):
                 self.gui.text_usd_arr[count]['text'] = f'({conv_currency_str(balance_usd[s])} USD)'
             print_finish_thread(self.tag, self.st, [f'Change: ({conv_currency_str(change)})'])
         except ccxt.errors.AuthenticationError:
-            print('\n[!] Authentication Error\n\tCheck API key and secret and try again')
+            print(bcolors.WARNING + '\n[!] Authentication Error\n\tCheck API key and secret and try again')
             for rb_label in self.gui.text_amount_arr:
                 rb_label['text'] = ''
             for rb_label2 in self.gui.text_usd_arr:
@@ -160,10 +264,9 @@ class AsyncFetchBalance(Thread):
             self.gui.text_usd_arr[0]['text'] = 'Error'
             self.gui.text_amount_arr[2]['text'] = 'Check API Key'
             self.gui.text_usd_arr[2]['text'] = 'and Secret'
-            vv = ''
 
 
-class AsyncDataHandler(Thread):
+class AsyncDataHandler(threading.Thread):
     """
     AsyncDataHandler(gui, current_data, client, symbols, fetch_plot_delay=0.0, tag='data_handler')
 
@@ -186,14 +289,14 @@ class AsyncDataHandler(Thread):
 
     tag = 'data_handler'
 
-    def __init__(self, gui: bybit_gui.Toplevel1, current_data: pd.DataFrame, client: bybit, symbols: list,
+    def __init__(self, gui: gui.Toplevel1, current_data: pd.DataFrame, client: bybit, symbols: list,
                  fetch_plot_delay=0.0,
                  tag='data_handler'):
         super().__init__()
         if self.tag != tag:
             self.tag = tag
         self.handler = bybit_data_handler.Handler(current_data, client, symbols,
-                                                  DATA_SIZE + list(MOVING_AVG_DICT.keys())[-2])
+                                                  DATA_SIZE + list(MOVING_AVG_DICT)[-2])
         self.symbols = symbols
         self.gui = gui
         self.fetch_plot_delay = fetch_plot_delay
@@ -207,14 +310,14 @@ class AsyncDataHandler(Thread):
         print_finish_thread(self.tag, self.st)
         safe_start_thread(
             AsyncFetchPlot(self.gui, DATA_SIZE, trading_crypto.get(), MAIN_DF, delay=self.fetch_plot_delay))
-        if int(CONF['config']['settings']['trade_amount']) > 0 and IS_TRADING:
-            print('\nInit Trading ***')
+        if int(CONF.c['settings']['trade_amount']) > 0 and IS_TRADING:
+            print(bcolors.ENDC + '\nInit Trading ***')
             safe_start_thread(
-                AsyncFetchPrediction(self.gui, trading_crypto.get(), CONF['config']['settings']['trade_amount'],
+                AsyncFetchPrediction(self.gui, trading_crypto.get(), CONF.c['settings']['trade_amount'],
                                      MAIN_DF, MODELS[self.symbols[trading_crypto.get()]]))
 
 
-class AsyncFetchPlot(Thread):
+class AsyncFetchPlot(threading.Thread):
     """
     AsyncFetchPlot(gui, size, sel_sym, current_data, delay=0.0, tag='fetch_plot')
 
@@ -234,7 +337,7 @@ class AsyncFetchPlot(Thread):
     """
     tag = 'fetch_plot'
 
-    def __init__(self, gui: bybit_gui.Toplevel1, size: int, sel_sym: int, current_data: pd.DataFrame, delay=0.0,
+    def __init__(self, gui: gui.Toplevel1, size: int, sel_sym: int, current_data: pd.DataFrame, delay=0.0,
                  tag='fetch_plot'):
         super().__init__()
         sns.set_theme()
@@ -247,8 +350,8 @@ class AsyncFetchPlot(Thread):
         self.current_data = current_data
         self.gui = gui
         self.sel_sym = sel_sym
-        if MODELS[SYMBOLS[self.sel_sym]]['args']['data_size'] is not None and MODELS[SYMBOLS[self.sel_sym]]['args']['data_size'] > 0:
-            size = int(MODELS[SYMBOLS[self.sel_sym]]['args']['data_size'])
+        if MODELS[SYMBOLS[self.sel_sym]].seq is not None and MODELS[SYMBOLS[self.sel_sym]].seq > 0:
+            size = int(MODELS[SYMBOLS[self.sel_sym]].seq)
         self.size = size
         self.st = 0
 
@@ -351,7 +454,7 @@ class AsyncFetchPlot(Thread):
         return f'BALANCE [{bal_period.get()} period]'
 
 
-class AsyncFetchPrediction(Thread):
+class AsyncFetchPrediction(threading.Thread):
     """
     AsyncFetchPrediction(gui, sel_sym, current_data, model, tag='prediction')
 
@@ -375,7 +478,7 @@ class AsyncFetchPrediction(Thread):
     """
     tag = 'prediction'
 
-    def __init__(self, gui: bybit_gui.Toplevel1, sel_sym: int, current_data: pd.DataFrame, model: dict, tag='prediction'):
+    def __init__(self, gui: gui.Toplevel1, sel_sym: int, current_data: pd.DataFrame, model: Model, tag='prediction'):
         super().__init__()
         if self.tag != tag:
             self.tag = tag
@@ -383,10 +486,7 @@ class AsyncFetchPrediction(Thread):
         self.gui = gui
         self.model = model
         self.sel_sym = sel_sym
-        if MODELS[self.sel_sym]['data_size'] is not None and MODELS[self.sel_sym]['data_size'] > 0:
-            self.size = int(MODELS[self.sel_sym]['data_size'])
-        else:
-            self.size = DATA_SIZE
+        self.size = model.seq
         self.current_data = current_data
         self.st = 0
 
@@ -398,34 +498,34 @@ class AsyncFetchPrediction(Thread):
         no_pos, buy_pos, sell_pos = (0, 1, -1)
         current_price = self.current_data[f'{SYMBOLS[self.sel_sym]}_close'].values[-1]
 
-        processed_data = bybit_data_handler.preprocess_data(self.current_data, SYMBOLS, self.model['args'])
-        self.model = self.model['model']
+        processed_data = bybit_data_handler.preprocess_data(self.current_data, self.model.get_args())
 
         if ((PREDICTION == 1 and (current_price > self.current_data[f'{SYMBOLS[self.sel_sym]}_close'].values[-2])) or
                 (PREDICTION == 0 and (
                         self.current_data[f'{SYMBOLS[self.sel_sym]}_close'].values[-2] > current_price))):
-            CONF['config']['stats']['correct_prediction'] += 1
-        CONF['config']['stats']['correct_prediction'] += 1
+            CONF.c['stats']['correct_prediction'] += 1
+        CONF.c['stats']['correct_prediction'] += 1
 
-        if bool(CONF['config']['settings']['testing']) or HARD_TESTING_LOCK or self.model is None:
-            CONF['config']['settings']['testing'] = True
-            print('*** Testing Prediction ***')
+        if bool(CONF.c['settings']['testing']) or HARD_TESTING_LOCK or self.model.model is None:
+            CONF.c['settings']['testing'] = True
+            print(bcolors.ENDC + '*** Testing Prediction ***')
             PREDICTION = random.randint(0, 1)  # 0 == price down, 1 == price up
         else:
-            PREDICTION = int(self.model.predict([processed_data])[0][0])
+            pass
+            # PREDICTION = int(self.model.predict([processed_data])[0][0])
 
-        qty = int(CONF['config']['settings']['trade_amount']) + (HAS_POSITION['qty'] * abs(HAS_POSITION['position']))
+        qty = int(CONF.c['settings']['trade_amount']) + (HAS_POSITION['qty'] * abs(HAS_POSITION['position']))
         # qty account for difference in previous trade and pulling out of last position as well as following new position
         if PAST_TRADED_CRYPTO != self.sel_sym and self._testing_check():
             if HAS_POSITION == buy_pos:  # Nullify position on past coin if coin selected differs from past
                 # self.exchange.create_market_sell_order(symbol=f"{SYMBOLS[PAST_TRADED_CRYPTO]}/USD", amount=HAS_POSITION['qty'])  # SELL
-                print('\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
-                print('ORDER: SELL :: CHANGED CRYPTO')
+                print(bcolors.FAIL + '\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
+                print(bcolors.ENDC + 'ORDER: SELL :: CHANGED CRYPTO')
                 HAS_POSITION['position'] = no_pos
             elif HAS_POSITION == sell_pos:  # Nullify position on past coin if coin selected differs from past
                 # self.exchange.create_market_buy_order(symbol=f"{SYMBOLS[PAST_TRADED_CRYPTO]}/USD", amount=HAS_POSITION['qty'])  # BUY
-                print('\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
-                print('ORDER: BUY :: CHANGED CRYPTO')
+                print(bcolors.FAIL + '\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
+                print(bcolors.ENDC + 'ORDER: BUY :: CHANGED CRYPTO')
                 HAS_POSITION['position'] = no_pos
 
         order = None
@@ -435,13 +535,13 @@ class AsyncFetchPrediction(Thread):
                 HAS_POSITION['position'] = buy_pos
                 if self._testing_check():
                     # order = self.exchange.create_market_buy_order(symbol=f"{self.sel_sym}/USD", amount=qty)
-                    print('\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
+                    print(bcolors.FAIL + '\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
                 status = 'OK buy order'
             elif PREDICTION == 0 and HAS_POSITION['position'] != sell_pos:
                 HAS_POSITION['position'] = sell_pos
                 if self._testing_check():
                     # order = self.exchange.create_market_sell_order(symbol=f"{self.sel_sym}/USD", amount=qty)
-                    print('\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
+                    print(bcolors.FAIL + '\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
                 status = 'OK sell order'
         except ccxt.errors.InsufficientFunds:
             global IS_TRADING
@@ -454,10 +554,10 @@ class AsyncFetchPrediction(Thread):
 
     @staticmethod
     def _testing_check():
-        return not bool(CONF['config']['settings']['testing']) and not HARD_TESTING_LOCK
+        return not bool(CONF.c['settings']['testing']) and not HARD_TESTING_LOCK
 
 
-class AsyncTestModel(Thread):
+class AsyncTestModel(threading.Thread):
     """
     AsyncTestModel(model_path, symbol, current_data, tag='test_model')
 
@@ -476,59 +576,110 @@ class AsyncTestModel(Thread):
     """
     tag = 'test_model'
 
-    def __init__(self, model_path: str, symbol: str, tag='test_model'):
+    def __init__(self, data: pd.DataFrame, testing_model: Model, target: str, verbose: int = 0, tag='test_model'):
         super().__init__()
         if self.tag != tag:
             self.tag = tag
-        self.model_path = model_path
-        self.symbol = symbol
-        # self.current_data = current_data
+        self.data = data
+        self.verbose = verbose
+        self.target = target
+        self.model = testing_model
+        self._return = 0
         self.st = 0
 
     def run(self):
-        try_count, max_count = 0, 22
-        while len(MAIN_DF) == 0:
-            if try_count > max_count:
-                print('ERROR: Data not loaded. Could not test model.')
-                exit()
-            try_count += 1
-            if try_count % 5 == 0:
-                print(f'Thread: {self.tag} held. Waiting for data.  {try_count}/{max_count}')
-            time.sleep(3)
-
         self.st = time.time()
-        status_lst = ['PASSED']
-        process_time = 0
-        try:
-            mod = load_model(self.model_path)
-            summary = get_model_info(self.symbol, mod, return_str=True)
-            for s in summary:
-                print(s)
-            model_args = self.model_path.split('/')[-1].split('__')[-1].split('-')
-            model_args = {'size': int(model_args[0][1:]),
-                          'ma': [int(v) for v in model_args[1].split('[')[-1].replace(']', '').split('_')],
-                          'ema': [int(v) for v in model_args[2].split('[')[-1].replace(']', '').split('_')],
-                          'drop_sym': [v for v in model_args[3].split('[')[-1].split(']')[0].split('_')]}
-            process_time = time.time()
-            data = bybit_data_handler.preprocess_data(MAIN_DF, data_mod_args=model_args)
-            process_time = time.time() - process_time
-            x = 1
-            data = np.asarray(data)
-            print(data.shape)
-            try:
-                pre = mod.predict(data)
-                x = 'hello'
-            except Exception as e:
-                print(e)
-        except (AttributeError, ValueError, TypeError) as e:
-            status_lst = [str(type(e)), 'FAILED']
-        finally:
-            if process_time != 0:
-                status_lst.append(f'data process time: {round(process_time,4)}')
-            print_finish_thread(self.tag, self.st, status_lst)
+        self._return = self.test_model()
+        print_finish_thread(self.tag, self.st, ['eval:', round(self._return, 6)])
+
+    def join(self, *args):
+        threading.Thread.join(self, *args)
+        return self._return
+
+    def test_model(self):
+        import networkTraining as nt
+        test_x, test_y = nt.build_data(self.data, self.target, self.model.seq, self.model.future_p, self.model.drop_symbols,
+                                       self.model.moving_avg, self.model.e_moving_avg, self.verbose, test_only=True)
+
+        return self.model.model.evaluate(test_x, test_y, self.model.batch, verbose=self.verbose)
 
 
-class AsyncBuildBalance(Thread):
+class AsyncTrainModel(threading.Thread):
+    """
+    AsyncTrainModel(model_path, symbol, current_data, tag='train_model')
+
+    Thread to load the model via 'model_path', test provided model on current data for errors,
+        and assign provided model to model dist.
+
+    Prints duration thread run & status of model ie. (PASSED | FAILED)
+
+    Required Arguments:
+        model_path(str):    path to model on disk.
+        symbol(str):    Crypto symbol to assign the model if passes.
+        current_data(pandas.DataFrame): Dataframe of current operating data.
+
+    Optional Keyword Arguments:
+        tag(str) = 'fetch_plot':   Unique tag to keep track of this thread in pool.
+        """
+    tag = 'train_model'
+
+    def __init__(self, gui: gui.Toplevel1, data_args: dict, model_args: list, verbose: int, force_new: bool, tag='train_model'):
+        super().__init__()
+        if self.tag != tag:
+            self.tag = tag
+        self.gui = gui
+        self.data_args = data_args
+        self.model_args = model_args
+        self.verbose = verbose
+        self.force_new = force_new
+        self.st = 0
+        self._kill = False
+
+    def run(self):
+        self.st = time.time()
+        import networkTraining
+        global MODELS, CONF
+        nt = networkTraining
+        raw_data, new_model = nt.train(self, self.gui, self.data_args, self.model_args, self.verbose, self.force_new,
+                                       CONF.key, CONF.secret)
+        old_model = MODELS[self.data_args.get('target')]
+        if old_model.model is None:
+            # assign new model to model
+            MODELS[self.data_args.get('target')] = new_model
+            mm = MODELS[self.data_args.get('target')]
+            nt.update_progress('New Model Saved.', max_value=1, update=1, reset=True)
+            status = 'No model found. New model saved.'
+        else:
+            nt.VERBOSE = 0
+            nt.update_progress('Evaluating.', max_value=2, reset=True)
+
+            eval1 = AsyncTestModel(raw_data.copy(), new_model, self.data_args.get('target')).test_model()
+            eval2 = AsyncTestModel(raw_data.copy(), old_model, self.data_args.get('target')).test_model()
+            dif = eval1
+            status = f'Old model kept.\tEval split: {eval2 - eval1}'
+            if eval1 < eval2:
+                MODELS[self.data_args.get('target')] = new_model
+                status = f'New model used.\tEval split: {eval1 - eval2}'
+        time.sleep(2)
+        nt.update_progress(reset=True)
+        self.gui.btn_start_train['text'] = 'Start Training'
+        self.gui.prog_bar_train['value'] = 0
+        self.gui.label_train_status['text'] = ''
+        print_finish_thread(self.tag, self.st, [status])
+
+    def kill(self):
+        self._kill = True
+
+    def check_kill(self):
+        if self._kill:
+            self.gui.btn_start_train['text'] = 'Start Training'
+            self.gui.prog_bar_train['value'] = 0
+            self.gui.label_train_status['text'] = ''
+            print(bcolors.WARNING + "WARNING: Thread: 'AsyncTrainModel'" + bcolors.FAIL + " Killed.")
+            exit(2)
+
+
+class AsyncBuildBalance(threading.Thread):
     """
     AsyncBuildBalance(tag='build_balance')
 
@@ -594,26 +745,25 @@ def print_finish_thread(tag: str, start_time: float, args: list = None):
     to_app = ''
     if args is not None:
         for arg in args:
-            to_app += arg + '\t'
-    print(f'Finished: {tag}:\t\t{to_app}Duration: {round(time.time() - start_time, 4)}sec')
+            to_app += str(arg) + '\t'
+    print(bcolors.ENDC + f'{time.ctime()}\t' + bcolors.OKGREEN +
+          f'Finished: {tag}:\t\t' + bcolors.ENDC + f'{to_app}Duration: {round(time.time() - start_time, 4)}sec')
 
 
 def set_tk_var():
     """Set tkinter module global variables"""
     global trading_crypto
     trading_crypto = tk.IntVar()
-    global api_key_entry
-    api_key_entry = tk.StringVar()
-    global api_secret_entry
-    api_secret_entry = tk.StringVar()
     global MOVING_AVG_DICT
-    MOVING_AVG_DICT = {key: tk.IntVar() for key in MOVING_AVG_DICT.keys()}
+    MOVING_AVG_DICT = {key: tk.IntVar() for key in MOVING_AVG_DICT}
     global MOVING_AVG_BAL_DICT
-    MOVING_AVG_BAL_DICT = {key: tk.IntVar() for key in MOVING_AVG_BAL_DICT.keys()}
+    MOVING_AVG_BAL_DICT = {key: tk.IntVar() for key in MOVING_AVG_BAL_DICT}
     global plot_type
     plot_type = tk.StringVar()
     global bal_period
     bal_period = tk.StringVar()
+    global train_symbol
+    train_symbol = tk.StringVar()
 
 
 def init(top, gui, *args, **kwargs):
@@ -623,37 +773,71 @@ def init(top, gui, *args, **kwargs):
     Call root loops (refresh(), trading_loop()).
     Update GUI values with config values
     """
-    global w, top_level, root, CLIENT, IND_IMAGE, BALANCE_DF
+    global w, top_level, root, CLIENT, IND_IMAGE, BALANCE_DF, CONF, MODELS
     w = gui
-    load_config()
-    CLIENT = bybit(test=False, api_key=CONF['config']['user']['api_key'],
-                   api_secret=CONF['config']['user']['api_secret'])
+    CONF = Config(filepath=CONFIG_FILE_PATH)
+    CLIENT = bybit(test=False, api_key=CONF.c['user']['api_key'],
+                   api_secret=CONF.c['user']['api_secret'])
+    IND_IMAGE = {'green': PhotoImage(file='bin/res/green_ind_round.png'), 'red': PhotoImage(file='bin/res/red_ind_round.png'),
+                 'yellow': PhotoImage(file='bin/res/yellow_ind_round.png')}
+    for s in SYMBOLS:
+        m_args = CONF.c['settings'][f'{s.lower()}_model']
+        MODELS[s] = Model(location=m_args['location'], size=m_args['seq'],
+                          moving_avg=m_args['moving_avg'], e_moving_avg=m_args['e_moving_avg'], drop=m_args['drop'])
     BALANCE_DF = pd.DataFrame()
     safe_start_thread(AsyncBuildBalance())
     top_level = top
     root = top
-    IND_IMAGE = {'green': PhotoImage(file='bin/res/green_ind_round.png'), 'red': PhotoImage(file='bin/res/red_ind_round.png'),
-                 'yellow': PhotoImage(file='bin/res/yellow_ind_round.png')}
+    set_gui_fields(gui)
     refresh()
     trading_loop()
     api_change()
-    w.text_prediction['text'] = '-'
+
+
+def set_gui_fields(gui: gui.Toplevel1):
+    global CONF
+    gui.text_prediction['text'] = '-'
     gui.entry_trade_amount.delete(0, 'end')
-    gui.entry_trade_amount.insert(0, CONF['config']['settings']['trade_amount'])
+    gui.entry_trade_amount.insert(0, CONF.c['settings']['trade_amount'])
     gui.entry_loss.delete(0, 'end')
-    gui.entry_loss.insert(0, CONF['config']['settings']['loss_amount'])
+    gui.entry_loss.insert(0, CONF.c['settings']['loss_amount'])
     gui.entry_loss_period.delete(0, 'end')
-    gui.entry_loss_period.insert(0, CONF['config']['settings']['loss_period'])
-    if CONF['config']['settings']['plot_display'] in TYPES_OF_PLOTS:
-        gui.combo_box_plot_type.set(CONF['config']['settings']['plot_display'])
+    gui.entry_loss_period.insert(0, CONF.c['settings']['loss_period'])
+
+    if CONF.c['settings']['plot_display'] in TYPES_OF_PLOTS:
+        gui.combo_box_plot_type.set(CONF.c['settings']['plot_display'])
     else:
         gui.combo_box_plot_type.set(TYPES_OF_PLOTS[0])
 
-    if CONF['config']['settings']['balance_plot_period'] in list(BALANCE_PERIODS_DICT.keys()):
-        gui.combo_box_bal_period.set(CONF['config']['settings']['balance_plot_period'])
+    if CONF.c['settings']['balance_plot_period'] in list(BALANCE_PERIODS_DICT):
+        gui.combo_box_bal_period.set(CONF.c['settings']['balance_plot_period'])
     else:
-        gui.combo_box_bal_period.set(list(BALANCE_PERIODS_DICT.keys())[0])
-    [gui.ma_btns[k].select() for k, v in enumerate(list(CONF['config']['settings']['PMA'])) if v == 1]
+        gui.combo_box_bal_period.set(list(BALANCE_PERIODS_DICT)[0])
+    [gui.ma_btns[k].select() for k, v in enumerate(list(CONF.c['settings']['PMA'])) if v == 1]
+
+    # {'target': 'BTC', 'future': 1, 'size': 1000, 'period': 1,
+    #                    'epochs': 10, 'seq': 128, 'batch': 64, 'ma': [5, 10], 'ema': [4, 8]},
+
+    model_args = CONF.c['settings']['model_arguments']
+    gui.combo_box_target.current(SYMBOLS.index(model_args.get('target')))
+    gui.entry_future_p.delete(0, 'end')
+    gui.entry_future_p.insert(0, model_args.get('future'))
+    gui.entry_data_size.delete(0, 'end')
+    gui.entry_data_size.insert(0, model_args.get('size'))
+    gui.entry_data_period.delete(0, 'end')
+    gui.entry_data_period.insert(0, model_args.get('period'))
+    gui.entry_epoch.delete(0, 'end')
+    gui.entry_epoch.insert(0, model_args.get('epochs'))
+    gui.entry_seq_len.delete(0, 'end')
+    gui.entry_seq_len.insert(0, model_args.get('seq'))
+    gui.entry_batch_size.delete(0, 'end')
+    gui.entry_batch_size.insert(0, model_args.get('batch'))
+    gui.entry_ma.delete(0, 'end')
+    gui.entry_ma.insert(0, str(model_args.get('ma'))[1:-1].replace(' ', ''))
+    gui.entry_ema.delete(0, 'end')
+    gui.entry_ema.insert(0, str(model_args.get('ema'))[1:-1].replace(' ', ''))
+    for layer in CONF.c['settings']['model_blueprint']:
+        model_struct_row(layer)
 
 
 def destroy_window():
@@ -665,10 +849,11 @@ def destroy_window():
 
 
 def window_close():
-    """Writes to config file and ends threads. Then calls destroy_window()"""
-    global IS_QUITTING, w
-    write_config(CONF)
+    """Save file(s) and ends threads. Then calls destroy_window()"""
+    global IS_QUITTING, BALANCE_DF_PATH, w
     IS_QUITTING = True
+    CONF.write_config()
+    BALANCE_DF.to_csv(BALANCE_DF_PATH)
     try:
         w.canvas_open_close.destroy()
     except AttributeError:
@@ -676,56 +861,6 @@ def window_close():
     for t in THREAD_POOL:
         t.join()
     destroy_window()
-
-
-def quitting_text():
-    """Displays quitting text in appropriate areas"""
-    global w
-    l_c = w.loading_plot_label['text']
-    if ('Quitting' in l_c) and len(l_c[l_c.find('.'):]) <= 3:
-        w.loading_plot_label['text'] = f'{" "}{w.btn_start_stop["text"]}{"."}'
-    else:
-        w.loading_plot_label['text'] = 'Quitting'
-    root.after(1000, lambda: quitting_text())
-
-
-def rec_config(dictionary: dict):
-    """
-    rec_config(dictionary: dict)
-
-    Recursively goes through provided dict to get all keys.
-
-    Required Arguments:
-        dictionary(dict): dict to be iterated over.
-    :returns
-        (str)   Keys from dictionary.
-    """
-    for key, value in dictionary.items():
-        if type(value) is dict:
-            yield key
-            yield from rec_config(value)
-        else:
-            yield key
-
-
-def checksum_config(conf: dict):
-    """
-    checksum_config(conf: dict)
-    Compares check of config to default config for errors.
-
-    Required Argument:
-        config(dict):   Dictionary to checksum.
-
-    :returns
-        (str)   Hashed dictionary keys.
-    """
-    conf_sum = ''
-    for key in rec_config(conf):
-        conf_sum += key
-    default_sum = ''
-    for key in rec_config(DEFAULT_CONFIG):
-        default_sum += key
-    return hash(default_sum) == hash(conf_sum)
 
 
 def conv_currency_str(value: float):
@@ -778,85 +913,14 @@ def safe_start_thread(t: callable):
     """
     global THREAD_POOL
     if AsyncBuildBalance.tag in [tag.tag for tag in THREAD_POOL]:
-        print(f'Still Building Balance. Thread: "{t.tag}" NOT Started.')
+        print(bcolors.ENDC + f'Still Building Balance. Thread: "{t.tag}"' + bcolors.WARNING + ' NOT Started.')
         return
     elif t.tag in [tag.tag for tag in THREAD_POOL]:
-        print(f'Thread: "{t.tag}" Running. NOT Started.')
+        print(bcolors.ENDC + f'Thread: "{t.tag}" Running.' + bcolors.WARNING + ' NOT Started.')
         return
     t.start()
     THREAD_POOL.append(t)
-    print(f'Started Thread: "{t.tag}" Safely.')
-
-
-def load_config():
-    f"""
-    Loads config file. If the file is not found replace with a default one and passes values to GUI.
-    If error occurs loading user config file more than 3 times it will be over written with the default config file.
-        Old config file will be renamed to: CONFIG_FILE_NAME.yaml.old
-
-    Exits after config files checked to be corrupt or Incorrect Structure.
-    """
-    global w, PAST_TRADED_CRYPTO
-    # load config file. if file not found replace with default.
-    # if error loading config more than 3 times temp old config and replace with default config then
-    # load default values into GUI
-    global CONFIG_FILE_PATH, DEFAULT_CONFIG, CONF
-    try:
-        with open(CONFIG_FILE_PATH, 'r') as file:
-            CONF = yaml.safe_load(file)
-    except FileNotFoundError:
-        print(f'ERROR:: Config file not found at: {CONFIG_FILE_PATH}\nReplacing with default config file.')
-        write_config(DEFAULT_CONFIG)
-        CONF = DEFAULT_CONFIG
-    if not checksum_config(CONF):
-        out_text = ''
-        # check if config file and default config have the same keys in them via checksum
-        settings_conf = CONF["config"]["settings"]
-        out_text += f'ERROR:: Config file corrupt or Incorrect Structure please DELETE or REVERT file at: {CONFIG_FILE_PATH}\n' \
-                    f'Expected:{DEFAULT_CONFIG.keys()}\n' \
-                    f'Received:{CONF.keys()}'
-        out_text += f'\nAttempts {settings_conf["st_count"]}/{settings_conf["st_count_re"]}'
-        CONF['config']['settings']['st_count'] += 1
-        if settings_conf["st_count"] >= settings_conf["st_count_re"]:
-            config_rename = f'{CONFIG_FILE_PATH}.OLD'
-            print(f'Writing Default Config File. Old file saved as {config_rename}')
-            os.rename(CONFIG_FILE_PATH, config_rename)
-            write_config(DEFAULT_CONFIG)
-        else:
-            write_config(CONF)
-            exit(
-                f'ERROR:: Config file corrupt or Incorrect Structure please DELETE or REVERT file at: {CONFIG_FILE_PATH}\n'
-                f'Attempt(s) {settings_conf["st_count"]}/{settings_conf["st_count_re"]}')
-
-    conf_settings = CONF['config']['settings']
-    w.text_testing['text'] = conf_settings['testing']
-    if conf_settings['def_coin'] == 'ETH':
-        PAST_TRADED_CRYPTO = 1
-        w.rb_cont_arr[1].invoke()
-    elif conf_settings['def_coin'] == 'XRP':
-        PAST_TRADED_CRYPTO = 2
-        w.rb_cont_arr[2].invoke()
-    elif conf_settings['def_coin'] == 'EOS':
-        PAST_TRADED_CRYPTO = 3
-        w.rb_cont_arr[3].invoke()
-    else:
-        PAST_TRADED_CRYPTO = 0
-        w.rb_cont_arr[0].invoke()
-
-
-def write_config(conf_out: dict):
-    """
-    Write passed config_out to config file & safe balance_df then print saved to console.
-
-    Required Arguments:
-        config_out(dict):   Config dictionary to wright to yaml
-    """
-    # write given file to yaml as config file
-    global CONFIG_FILE_PATH
-    BALANCE_DF.to_csv(BALANCE_DF_PATH)
-    with open(CONFIG_FILE_PATH, 'w') as output:
-        yaml.dump(conf_out, output, sort_keys=False, default_flow_style=False)
-    print('SAVED')
+    print(bcolors.ENDC + f'Started Thread: "{t.tag}"' + bcolors.OKGREEN + ' Safely.')
 
 
 def api_change():
@@ -865,16 +929,16 @@ def api_change():
     Updates values for GUI as well as CLIENT and fetches new balance.
     """
     global MAIN_DF, CLIENT, w
-    w.text_api_key['text'] = obfuscate_api_info(CONF['config']['user']['api_key'])
-    w.text_api_secret['text'] = obfuscate_api_info(CONF['config']['user']['api_secret'])
-    if obfuscate_api_info(CONF['config']['user']['api_key']) == 'ERROR' or obfuscate_api_info(
-            CONF['config']['user']['api_secret']) == 'ERROR':
+    w.text_api_key['text'] = obfuscate_api_info(CONF.key)
+    w.text_api_secret['text'] = obfuscate_api_info(CONF.secret)
+    if obfuscate_api_info(CONF.key) == 'ERROR' or obfuscate_api_info(
+            CONF.secret) == 'ERROR':
         trigger_error_bar(lines=['ERROR:  API Key/Secret', 'Try Updating API Key or Secret'], duration=10)
 
     safe_start_thread(
-        AsyncFetchBalance(w, key=CONF['config']['user']['api_key'], secret=CONF['config']['user']['api_secret']))
-    CLIENT = bybit(test=False, api_key=CONF['config']['user']['api_key'],
-                   api_secret=CONF['config']['user']['api_secret'])
+        AsyncFetchBalance(w, key=CONF.key, secret=CONF.secret))
+    CLIENT = bybit(test=False, api_key=CONF.c['user']['api_key'],
+                   api_secret=CONF.c['user']['api_secret'])
     safe_start_thread(AsyncDataHandler(w, MAIN_DF, CLIENT, SYMBOLS))
 
 
@@ -883,7 +947,7 @@ def trading_loop():
     global TRADING_COUNT, w
     if TRADING_COUNT >= 1:
         safe_start_thread(
-            AsyncFetchBalance(w, key=CONF['config']['user']['api_key'], secret=CONF['config']['user']['api_secret']))
+            AsyncFetchBalance(w, key=CONF.key, secret=CONF.secret))
         safe_start_thread(AsyncDataHandler(w, MAIN_DF, CLIENT, SYMBOLS, fetch_plot_delay=0.5))
     TRADING_COUNT += 1
     if not IS_QUITTING:
@@ -904,14 +968,14 @@ def refresh():
             n_val = f'{" "}{w.btn_start_stop["text"]}{"."}'
             w.loading_plot_label['text'] = n_val
             w.btn_start_stop['text'] = n_val
-    w.text_testing['text'] = str(bool(CONF['config']['settings']['testing']))
-    w.text_pred_total['text'] = CONF['config']['stats']['total_prediction']
-    w.text_pred_correct['text'] = CONF['config']['stats']['correct_prediction']
-    w.text_total_profit['text'] = conv_currency_str(CONF['config']['stats']['total_profit'])
-    w.text_last_trade_profit['text'] = conv_currency_str(CONF['config']['stats']['last_trade_profit'])
-    if int(CONF['config']['stats']['last_trade_profit']) > 0:  # green text color
+    w.text_testing['text'] = str(bool(CONF.c['settings']['testing']))
+    w.text_pred_total['text'] = CONF.c['stats']['total_prediction']
+    w.text_pred_correct['text'] = CONF.c['stats']['correct_prediction']
+    w.text_total_profit['text'] = conv_currency_str(CONF.c['stats']['total_profit'])
+    w.text_last_trade_profit['text'] = conv_currency_str(CONF.c['stats']['last_trade_profit'])
+    if int(CONF.c['stats']['last_trade_profit']) > 0:  # green text color
         w.text_last_trade_profit['foreground'] = '#25b100'
-    elif int(CONF['config']['stats']['last_trade_profit']) < 0:  # red text color
+    elif int(CONF.c['stats']['last_trade_profit']) < 0:  # red text color
         w.text_last_trade_profit['foreground'] = '#b10000'
     else:  # black text color
         w.text_last_trade_profit['foreground'] = '#000000'
@@ -932,16 +996,14 @@ def refresh():
 
     try:
         w.text_pred_acc[
-            'text'] = f'{(int(CONF["config"]["stats"]["correct_prediction"]) / int(CONF["config"]["stats"]["total_prediction"])) * 100}%'
+            'text'] = f'{(int(CONF.c["stats"]["correct_prediction"]) / int(CONF.c["stats"]["total_prediction"])) * 100}%'
     except ZeroDivisionError:
         w.text_pred_acc['text'] = '-%'
 
     if len(THREAD_POOL) > 0:
         THREAD_POOL = [t for t in THREAD_POOL if t.is_alive()]
     REFRESH_COUNT += 1
-    if IS_QUITTING:
-        root.after(500, lambda: quitting_text())
-    else:
+    if not IS_QUITTING:
         root.after(1000, lambda: refresh())
 
 
@@ -964,7 +1026,7 @@ def trigger_error_bar(lines, duration, close=False):
     f_text = ''
     for l in lines:
         f_text += f'**{l}**\n'
-    print(f'* ERROR: {f_text}*')
+    print(bcolors.FAIL + f_text)
     w.text_error_bar['text'] = str(f_text)
     w.text_error_bar['foreground'] = '#880808'
     root.after(int(duration * 1000), lambda: trigger_error_bar(lines, duration, close=True))
@@ -973,51 +1035,57 @@ def trigger_error_bar(lines, duration, close=False):
 def reset_stats():
     """Reset stats to '0' and trade settings to default."""
     global PAST_TRADE_VAL, MAX_LOSS_VAL, PAST_BAL_LOSS, w
-    CONF['config']['settings']['trade_amount'] = 1
+    CONF.c['settings']['trade_amount'] = 1
     w.entry_trade_amount.delete(0, 'end')
-    w.entry_trade_amount.insert(0, CONF['config']['settings']['trade_amount'])
-    PAST_TRADE_VAL = CONF['config']['settings']['trade_amount']
-    CONF['config']['settings']['loss_amount'] = 5
+    w.entry_trade_amount.insert(0, CONF.c['settings']['trade_amount'])
+    PAST_TRADE_VAL = CONF.c['settings']['trade_amount']
+    CONF.c['settings']['loss_amount'] = 5
     w.entry_loss.delete(0, 'end')
-    w.entry_loss.insert(0, CONF['config']['settings']['loss_amount'])
-    MAX_LOSS_VAL = CONF['config']['settings']['loss_amount']
-    CONF['config']['settings']['loss_period'] = 10
+    w.entry_loss.insert(0, CONF.c['settings']['loss_amount'])
+    MAX_LOSS_VAL = CONF.c['settings']['loss_amount']
+    CONF.c['settings']['loss_period'] = 10
     w.entry_loss_period.delete(0, 'end')
-    w.entry_loss_period.insert(0, CONF['config']['settings']['loss_period'])
+    w.entry_loss_period.insert(0, CONF.c['settings']['loss_period'])
     t_p_b_l = PAST_BAL_LOSS
-    PAST_BAL_LOSS = deque(maxlen=CONF['config']['settings']['loss_period'])
+    PAST_BAL_LOSS = deque(maxlen=CONF.c['settings']['loss_period'])
     PAST_BAL_LOSS.append(t_p_b_l)
-    CONF['config']['stats']['total_prediction'] = 0
-    CONF['config']['stats']['correct_prediction'] = 0
-    CONF['config']['stats']['total_profit'] = 0
-    CONF['config']['stats']['last_trade_profit'] = 0
-    write_config(CONF)
+    CONF.c['stats']['total_prediction'] = 0
+    CONF.c['stats']['correct_prediction'] = 0
+    CONF.c['stats']['total_profit'] = 0
+    CONF.c['stats']['last_trade_profit'] = 0
+    CONF.write_config()
 
 
 def save_settings():
     """Call when save settings button is clicked. Saves API key & secret to config then calls api_change()."""
-    t_api_key = api_key_entry.get().strip()
-    con_key = CONF['config']['user']['api_key']
-    t_api_secret = api_secret_entry.get().strip()
-    con_secret = CONF['config']['user']['api_secret']
-    if (not t_api_key or not t_api_secret) and (con_key != t_api_key or con_secret != t_api_secret):
-        CONF['config']['user']['api_key'] = t_api_key
-        CONF['config']['user']['api_secret'] = t_api_secret
+    global w
+    t_api_key = w.entry_api_key.get().strip()
+    current_key = CONF.c['user']['api_key']
+    t_api_secret = w.entry_api_secret.get().strip()
+    current_secret = CONF.c['user']['api_secret']
+
+    if not t_api_key or not t_api_secret or current_key == t_api_key or current_secret == t_api_secret:
+        pass
+    else:
+        CONF.c['user']['api_key'] = t_api_key
+        CONF.key = t_api_key
+        CONF.c['user']['api_secret'] = t_api_secret
+        CONF.secret = t_api_secret
         if os.path.exists(BALANCE_DF_PATH):
             os.remove(BALANCE_DF_PATH)
-        safe_start_thread(AsyncBuildBalance())
+    safe_start_thread(AsyncBuildBalance())
     w.entry_api_key.delete(0, 'end')
     w.entry_api_secret.delete(0, 'end')
-    write_config(CONF)
+    CONF.write_config()
     api_change()
 
 
 def testing_toggle():
     """When test button pressed Toggles test mode."""
-    CONF['config']['settings']['testing'] = not bool(CONF['config']['settings']['testing'])
+    CONF.c['settings']['testing'] = not bool(CONF.c['settings']['testing'])
 
 
-def place_moving_avg_btns(gui: bybit_gui.Toplevel1, var_set: dict, m_offset=0):
+def place_moving_avg_btns(gui: gui.Toplevel1, var_set: dict, m_offset=0):
     """
     Called from GUI creation.
     Makes moving average buttons for graphs and removes previous buttons.
@@ -1054,8 +1122,8 @@ def place_moving_avg_btns(gui: bybit_gui.Toplevel1, var_set: dict, m_offset=0):
         chk_btn_ma.place(x=x_pos, rely=0.25, height=20, width=55)
         chk_btn_ma.configure(command=lambda: moving_avg_check_btn(), text=text, variable=ma_var, background="#d9d9d9")
         gui.ma_btns.append(chk_btn_ma)
-    if list(MOVING_AVG_BAL_DICT.keys()) == list(var_set.keys()):
-        gui.combo_box_bal_period.place(x=6 + offset + (len(var_set.keys()) * 55), rely=0.25, height=20, width=80)
+    if list(MOVING_AVG_BAL_DICT) == list(var_set):
+        gui.combo_box_bal_period.place(x=6 + offset + (len(var_set) * 55), rely=0.25, height=20, width=80)
     else:
         gui.combo_box_bal_period.place_forget()
 
@@ -1068,8 +1136,8 @@ def moving_avg_check_btn():
     Required Arguments:
         event:  On click event.
     """
-    CONF['config']['settings']['PMA'] = [x.get() for x in MOVING_AVG_DICT.values()]
-    CONF['config']['settings']['BMA'] = [x.get() for x in MOVING_AVG_DICT.values()]
+    CONF.c['settings']['PMA'] = [x.get() for x in MOVING_AVG_DICT.values()]
+    CONF.c['settings']['BMA'] = [x.get() for x in MOVING_AVG_DICT.values()]
     if (60 - (time.time() % 60)) > 15:
         t = AsyncFetchPlot(w, DATA_SIZE, trading_crypto.get(), MAIN_DF, delay=4)
         safe_start_thread(t)
@@ -1083,7 +1151,7 @@ def plot_combo_box(event):
     Required Arguments:
         event:  On click event.
     """
-    CONF['config']['settings']['plot_display'] = plot_type.get()
+    CONF.c['settings']['plot_display'] = plot_type.get()
     if (60 - (time.time() % 60)) > 15:
         t = AsyncFetchPlot(w, DATA_SIZE, trading_crypto.get(), MAIN_DF, delay=4)
         safe_start_thread(t)
@@ -1098,7 +1166,7 @@ def bal_period_combo_box(event):
     Required Arguments:
         event:  On click event.
     """
-    CONF['config']['settings']['plot_display'] = bal_period.get()
+    CONF.c['settings']['plot_display'] = bal_period.get()
     if (60 - (time.time() % 60)) > 15:
         t = AsyncFetchPlot(w, DATA_SIZE, trading_crypto.get(), MAIN_DF, delay=4)
         safe_start_thread(t)
@@ -1116,13 +1184,9 @@ def load_model_btn(sym: str):
     Required Arguments:
         sym(str):   String of crypto symbol in witch the model is for.
     """
-    selected_file = filedialog.askopenfilename(initialdir=os.getcwd(), title=f"Select {sym} Model File",
-                                               filetypes=(("h5 model files", "*.h5"), ("hdf5 model files", "*.hdf5"),
-                                                          ("all files", "*.*")))
-    if selected_file != '':
-        safe_start_thread(AsyncTestModel(model_path=selected_file.strip(), symbol=sym))
-    else:
-        print('canceled')
+    global w
+    w.TNotebook1.select(2)
+    w.combo_box_target.current(SYMBOLS.index(sym))
 
 
 def get_model_info(symbol: str, model, return_str=True):
@@ -1141,11 +1205,11 @@ def get_model_info(symbol: str, model, return_str=True):
     """
     summary = []
     if model is None:
-        print(f'model: {symbol} not loaded')
+        print(bcolors.WARNING + f'WARNING: Model: {symbol} not loaded')
         return
     model.summary(line_length=100, print_fn=lambda x: summary.append(x))
     if not return_str:
-        bybit_gui.new_model_info_window(bybit_gui.ModelInfoWindow, summary=summary)
+        gui.new_model_info_window(gui.ModelInfoWindow, summary=summary)
     else:
         out = []
         longest = 0
@@ -1166,11 +1230,11 @@ def get_model_info(symbol: str, model, return_str=True):
 def update_trading_values():
     """Updates trading values to config file."""
     global PAST_TRADE_VAL, MAX_LOSS_VAL
-    PAST_TRADE_VAL = CONF['config']['settings']['trade_amount']
-    CONF['config']['settings']['trade_amount'] = w.entry_trade_amount.get()
-    MAX_LOSS_VAL = CONF['config']['settings']['loss_amount']
-    CONF['config']['settings']['loss_amount'] = w.entry_loss.get()
-    CONF['config']['settings']['loss_period'] = w.entry_loss_period.get()
+    PAST_TRADE_VAL = CONF.c['settings']['trade_amount']
+    CONF.c['settings']['trade_amount'] = w.entry_trade_amount.get()
+    MAX_LOSS_VAL = CONF.c['settings']['loss_amount']
+    CONF.c['settings']['loss_amount'] = w.entry_loss.get()
+    CONF.c['settings']['loss_period'] = w.entry_loss_period.get()
 
 
 def start_btn():
@@ -1193,7 +1257,166 @@ def start_btn():
         w.btn_start_stop.place(x=10, rely=0.870, height=60, width=260)
 
 
-if __name__ == '__main__':
-    import tempbybit_gui
+def model_struct_row(layer=None):
+    global w
+    if layer is not None:
+        y_pos = 32 + (5 * w.model_layer_lst['count']) + (20 * w.model_layer_lst['count'])
+        if w.model_layer_lst['count'] >= 7:
+            return
+        w.model_layer_lst['count'] += 1
 
-    tempbybit_gui.vp_start_gui()
+    else:
+        if w.model_layer_lst['count'] > 0:
+            w.model_layer_lst['count'] -= 1
+        rm = w.model_layer_lst['list'].pop()
+        for child in rm:
+            child.destroy()
+        return
+
+    combo_box = ttk.Combobox(w.FrameTraining2)
+    combo_box.place(x=5, y=y_pos, height=19, width=70)
+    combo_box.configure(background="#d9d9d9", font="-family {Segoe UI} -size 9")
+    combo_box['values'] = list(LAYER_OPTIONS)
+    combo_box.current(list(LAYER_OPTIONS).index(layer['layer']))
+    combo_box['state'] = 'readonly'
+
+    n_label = ttk.Label(w.FrameTraining2)
+    n_label.place(x=77, y=y_pos - 1, height=19, width=51)
+    n_label.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 9", relief="flat",
+                      anchor='w', justify='left', text='Neurons:')
+
+    n_entry = tk.Entry(w.FrameTraining2)
+    n_entry.place(x=129, y=y_pos, height=19, width=32)
+    n_entry.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 10")
+    n_entry.insert(0, layer['n'])
+
+    d_label = ttk.Label(w.FrameTraining2)
+    d_label.place(x=162, y=y_pos - 1, height=19, width=50)
+    d_label.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 9", relief="flat",
+                      anchor='w', justify='left', text='Dropout:')
+
+    d_entry = tk.Entry(w.FrameTraining2)
+    d_entry.place(x=213, y=y_pos, height=19, width=28)
+    d_entry.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 10")
+    d_entry.insert(0, layer['drop'])
+
+    w.model_layer_lst['list'].append([combo_box, n_entry, d_entry, n_label, d_label])
+
+
+def train_model():
+    if 'stop' in w.btn_start_train['text'].lower():
+        time.sleep(0.5)
+        for th in THREAD_POOL:
+            if th.tag == AsyncTrainModel.tag:
+                th.kill()
+        return
+    data_args = {}
+    args_key = ['target', 'future', 'size', 'period', 'epochs', 'seq', 'batch', 'ma', 'ema']
+    for count, entry in enumerate(w.training_fields):
+        try:
+            if count == 0:
+                if entry.get().strip() in SYMBOLS:
+                    data_args[args_key[count]] = entry.get().strip()
+                else:
+                    print(bcolors.FAIL + f'ERROR: TargetError: Selected target not an option: {entry.get().strip()}')
+                    return
+            elif count > len(w.training_fields) - 3:
+                data_args[args_key[count]] = [int(v.strip()) for v in entry.get().strip().split(',')]
+            else:
+                data_args[args_key[count]] = int(entry.get().strip())
+        except ValueError:
+            print(bcolors.FAIL + f'ERROR: ValueError: Model training field: #{count} value: {entry.get()} type: {type(entry.get())}')
+            return
+
+    for k in args_key[1:-2]:
+        if data_args[k] <= 0:
+            print(bcolors.WARNING + f'WARNING: Argument: "{k}" value: {data_args[k]} is invalid. Value must be greater than 0.')
+            return
+
+    model_args = []
+    for layer in w.model_layer_lst['list']:
+        try:
+            sub_l = []
+            for count, ll in enumerate(layer[:3]):
+                if count == 0:
+                    if ll.get().strip() in list(LAYER_OPTIONS):
+                        sub_l.append(ll.get().strip())
+                    else:
+                        print(bcolors.FAIL + f'ERROR: LayerTypeError: layer type not acceptable: {ll.get().strip()}')
+                        return
+                else:
+                    try:
+                        sub_l.append(int(ll.get().strip()))
+                    except ValueError:
+                        f = float(ll.get().strip())
+                        if f > 1:
+                            f = 1.0
+                        sub_l.append(f)
+            model_args.append(sub_l)
+        except ValueError:
+            print(bcolors.FAIL + f'ERROR: ValueError: value: {ll.get()} model layer: {str(layer)}')
+            return
+
+    if len(model_args) <= 0:
+        print(bcolors.WARNING + f'WARNING: Model Layout Invalid. Size: {len(model_args)} must be greater than 0.')
+        return
+
+    verbose = 1 if ('selected' in w.checkbutton_verbose.state() or 'alternate' in w.checkbutton_verbose.state()) else 0
+    force_new = True if ('selected' in w.checkbutton_new_data.state() or 'alternate' in w.checkbutton_new_data.state()) else False
+
+    w.btn_start_train['text'] = 'Stop Training'
+    safe_start_thread(AsyncTrainModel(w, data_args=data_args, model_args=model_args, verbose=verbose, force_new=force_new))
+
+
+# GLOBAL VARS
+
+# none
+CLIENT = None  # global var for bybit client
+
+# bool
+IS_TRADING = False  # if se tot trading mode or idle
+HARD_TESTING_LOCK = True  # software lock to prevent accidental trading wail testing
+IS_QUITTING = False  # when set to true to start the shutdown process.
+
+# ints
+DATA_SIZE = 120  # size of data for model. Changed when switching models.
+PREDICTION = -1  # current buy or sell choice. -1 = invalid, 0 = sell, 1 = buy
+TRADING_COUNT, REFRESH_COUNT, TICK = (0, 0, 0)  # counts for gui ticks
+PAST_ACT_BAL = 0  # previous account balance to check value change in balance
+MAX_LOSS_VAL = 0  # max value that can be lost before auto stop. retrived from config.
+PAST_TRADED_CRYPTO = 0  # hold last traded crypto. in case user changed wail crypto is still being held.
+
+# strings
+CONFIG_FILE_PATH = 'bin/res/config.yaml'  # config file location
+BALANCE_DF_PATH = 'bin/res/b_df'  # user balance dataframe
+VERSION = '0.0.2'  # version number
+
+# lists
+SYMBOLS = ['BTC', 'ETH', 'XRP', 'EOS']  # cryptocurrency that can be traded.
+TYPES_OF_PLOTS = ['Price', 'Balance', 'Both']  # types of graphs that can be displayed
+THREAD_POOL = []  # pool of all active threads
+LAYER_OPTIONS = {'LSTM': layers.LSTM, 'GRU': layers.GRU, 'RNN': layers.RNN, 'SimpleRNN': layers.SimpleRNN,
+                 'Dense': layers.Dense}  # options for layer types
+MODELS = {s: None for s in SYMBOLS}  # list of models
+
+# dictionary's
+HAS_POSITION = {'position': 0, 'qty': 0}  # hold last traded position and quantity
+ENT_PRICE = {'price': 0, 'side': 'none'}  # hold price entered in trade and buy or sell side
+BALANCE_PERIODS_DICT = {'10 min': 10, '60 Min': 60, '1 Day': 1440, '10 Day': 14400, '1 Month': 43800, '3 Month': 131400,
+                        '6 Month': 262800, '1 Year': 525600}  # periods in graph that can be displayed
+MOVING_AVG_DICT = {5: 0, 10: 0, 20: 0, 30: 0, 'EMA': 0}  # moving average options for price = 0 off, 1 on
+MOVING_AVG_BAL_DICT = {10: 0, 30: 0}  # moving option averages for price 0 off, 1 on
+DEFAULT_BLUEPRINT_LAYER = {'layer': list(LAYER_OPTIONS)[4], 'n': 16, 'drop': 0.0}  # default layer type
+
+IND_IMAGE = {'green': None, 'red': None, 'yellow': None}  # indicator images
+START_STOP_TEXT = {'start': 'Start Trading', 'stop': 'Stop Trading',
+                   'loading': 'Loading'}  # different text options for button
+
+# misc
+PAST_BAL_LOSS = deque(maxlen=2)  # hold past 2 balance changes
+MAIN_DF = pd.DataFrame()  # dataframe holding the coin price data
+BALANCE_DF = pd.DataFrame()  # dataframe holding the user balance price data
+CONF = Config()  # config file being used. set to default until initialized
+
+if __name__ == '__main__':
+    exit('START BY RUNNING "gui.py"')
