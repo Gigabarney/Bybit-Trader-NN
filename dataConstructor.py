@@ -1,27 +1,21 @@
 import concurrent.futures
+import networkTraining
 import time
 import os.path
 from tqdm import tqdm
 import pandas as pd
 from bybit import bybit
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
-import selenium.common.exceptions
-from selenium.webdriver.chrome.options import Options
-import config
-from collections import deque
-import nltk
 from dateutil import parser
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
 import numpy as np
 
 SYMBOLS = ['BTC', 'ETH', 'XRP', "EOS"]
-ITERATIONS = 1
+DATA_SIZE = 1
 DATA_PERIOD = 1
 THREADS = 1
-QUICK = False
 PRICE_SPREAD = 5
+VERBOSE = 1
+KEY = ''
+SECRET = ''
 
 
 def clean_data(data):
@@ -39,11 +33,14 @@ def clean_data(data):
 
 
 def pull_crypto(client, sym, itter, prog_bar):
+    import pickle
     # amount of data = 200(items) * itter(5) = 1000 *
     # amount of ratio = 5min intervul max 500 items
     temp = pd.DataFrame()
     for count in range(itter):
-        prog_bar.update(1 * 200)
+        networkTraining.PARENT.check_kill()
+        networkTraining.verbose_print(VERBOSE, '', update=200)
+        prog_bar.update(200)
         time_offset = (200 * (count + 1)) * (60 * DATA_PERIOD)
         try:
             dataset, columns = clean_data(client.Kline.Kline_get(symbol=f'{sym}USD', interval=f"{str(DATA_PERIOD)}",
@@ -63,26 +60,24 @@ def pull_crypto(client, sym, itter, prog_bar):
         for c, col in enumerate(columns):
             if col != 'open_time':
                 columns[c] = f'{sym}_{col}'
-        if len(temp) == 0:
-            temp = pd.DataFrame(dataset, columns=columns)
-        else:
-            temp = temp.append(pd.DataFrame(dataset, columns=columns), ignore_index=True)
+        temp = pd.concat([temp, pd.DataFrame(dataset, columns=columns)])
     temp.rename(columns={'open_time': 'time'}, inplace=True)
-    # temp.set_index('time', inplace=True)
     return temp
 
 
 def get_crypto(iters, file_name):
+    global VERBOSE
     try:
         df = pd.read_csv(file_name, index_col=0)
         df.sort_values('time')
-        print(f'Loaded crypto file: {file_name}  ...\n\tItems: {len(df.index)}\n')
+        networkTraining.verbose_print(VERBOSE, f'Loaded crypto file: {file_name}  ...\n\tItems: {len(df.index)}\n', max_val=-1)
     except FileNotFoundError:
-        print(f'"{file_name}" Not Found.\n\tCreating New Data File')
-        client = bybit(test=False, api_key=config.api_key, api_secret=config.api_secret)
+        networkTraining.verbose_print(VERBOSE, f'"{file_name}" Not Found.\n\tCreating New Data File', max_val=-1)
+        client = bybit(test=False, api_key=KEY, api_secret=SECRET)
         df = pd.DataFrame()
         time.sleep(1)
-        with tqdm(total=iters * len(SYMBOLS) * 200, unit=' Price Iterations') as crypto_prog_bar:
+        networkTraining.verbose_print(VERBOSE, 'Building Training Data...', max_val=iters * len(SYMBOLS) * 200, reset=True)
+        with tqdm(total=iters * len(SYMBOLS) * 200, unit=' Price Iterations', disable=not bool(VERBOSE)) as crypto_prog_bar:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = [executor.submit(pull_crypto, client, symbol, iters, crypto_prog_bar) for symbol in SYMBOLS]
                 for f in concurrent.futures.as_completed(futures):
@@ -95,8 +90,7 @@ def get_crypto(iters, file_name):
         df['time'] = df.index
         df.reset_index(drop=True, inplace=True)
         df.sort_values(by=['time'], inplace=True)
-        df.to_csv(path_or_buf=file_name)
-        print(f'Created crypto file: {file_name}  ...\n\tItems: {len(df.index)}\n')
+        networkTraining.verbose_print(VERBOSE, f'Created crypto file: {file_name}  ...\n\tItems: {len(df.index)}\n', max_val=-1)
     return df
 
 
@@ -178,7 +172,7 @@ def get_trading_records(file_name, oldest_date):
         df.sort_values('time')
         print(f'Loaded Trading Record file: {file_name}  ...\n\tItems: {len(df.index)}\n')
     except FileNotFoundError:
-        client = bybit(test=False, api_key=config.api_key, api_secret=config.api_secret)
+        client = bybit(test=False, api_key=KEY, api_secret=SECRET)
         df = pd.DataFrame()
 
         extra_th_symbols = ['BTC', 'ETH']
@@ -222,36 +216,49 @@ def merge_df(df1, df2):
                          direction='nearest', tolerance=(60 * DATA_PERIOD) - 1)
 
 
-def get_data(iteration_count: int = ITERATIONS, data_period: int = DATA_PERIOD, threads: int = THREADS, force_new: bool = False,
-             price_spread: int = PRICE_SPREAD):
-    global ITERATIONS  # Number or loops of data go get from ByBit. 1 iteration is 60 min worth or prices
-    ITERATIONS = iteration_count
+def get_data(key: str, secret: str, symbols: list = SYMBOLS, data_s: int = DATA_SIZE, data_p: int = DATA_PERIOD, threads: int = THREADS,
+             price_spread: int = PRICE_SPREAD,
+             force_new: bool = False, verbose: int = VERBOSE):
+    global KEY, SECRET
+    KEY = key
+    SECRET = secret
+    global SYMBOLS
+    SYMBOLS = symbols
+    global DATA_SIZE  # Number or loops of data go get from ByBit. 1 iteration is 60 min worth or prices
+    DATA_SIZE = data_s
     global THREADS  # Number fo threads to use when pulling article and parsing article data
     THREADS = threads
     global PRICE_SPREAD
     PRICE_SPREAD = price_spread
     global DATA_PERIOD
     p = [1, 3, 5, 15, 30, 60, 120, 240, 360, 720]
-    if data_period not in p:
-        print(f'\n\t*** Value: {data_period} is invalid.'
-              f'\n\tValue must be as follows: {p}'
-              f'\n\t"date_period" set to: 1')
-        data_period = 1
-    DATA_PERIOD = data_period
+    if data_p not in p:
+        networkTraining.verbose_print(verbose, f'\n\t*** Value: {data_p} is invalid.'
+                                               f'\n\tValue must be as follows: {p}'
+                                               f'\n\t"date_period" set to: 1', max_val=-1)
+        data_p = 1
+    DATA_PERIOD = data_p
+    global VERBOSE
+    VERBOSE = verbose
 
-    crypto_file = f'data\\crypto_data_{"-".join(SYMBOLS)}_iter_{ITERATIONS}.csv'
-    trading_r_file = f'data\\trading_records-{ITERATIONS}.csv'
-    news_file = f'data\\news_data_{ITERATIONS}.csv'
-    whale_alert_file = f'data\\whale_alert_{ITERATIONS}.csv'
-    merge_file = f'data\\FINAL_CRYPTO_{ITERATIONS}.csv'
+    crypto_file = f'data\\t_crypto_data_{"-".join(SYMBOLS)}_iter_{DATA_SIZE}.csv'
+    trading_r_file = f'data\\t_trading_records-{DATA_SIZE}.csv'
+    news_file = f'data\\t_news_data_{DATA_SIZE}.csv'
+    whale_alert_file = f'data\\t_whale_alert_{DATA_SIZE}.csv'
+    merge_file = f'data\\FINAL_CRYPTO_{DATA_SIZE}.csv'
 
-    if os.path.isfile(merge_file) and not force_new:
+    if force_new:
+        try:
+            os.remove(merge_file)
+        except FileNotFoundError:
+            pass
+    if os.path.isfile(merge_file):
         final_crypto = pd.read_csv(merge_file, dtype={'text': str, 'amount': str, 'trans': str}, index_col=0)
         final_crypto.sort_index(inplace=True)
-        print(f'Loaded FINAL data file: {merge_file}\n\n')
+        networkTraining.verbose_print(VERBOSE, f'Loaded FINAL data file: {merge_file}\n\n', max_val=-1)
         return SYMBOLS, final_crypto
     else:
-        final_df = get_crypto(file_name=crypto_file, iters=ITERATIONS)
+        final_df = get_crypto(file_name=crypto_file, iters=DATA_SIZE)
 
         # with concurrent.futures.ThreadPoolExecutor() as executor:
         #    article_futures = [executor.submit(get_trading_records, trading_r_file, final_df['time'][0])]
@@ -263,7 +270,3 @@ def get_data(iteration_count: int = ITERATIONS, data_period: int = DATA_PERIOD, 
         final_df.sort_index(inplace=True)
         final_df.to_csv(path_or_buf=merge_file)
         return SYMBOLS, final_df
-
-
-if __name__ == '__main__':
-    get_data()
