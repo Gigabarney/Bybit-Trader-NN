@@ -1,43 +1,85 @@
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import time
 from collections import deque
-import keras as K
 import keras.losses
 import numpy as np
-import random
 import pandas as pd
-import keras.backend
-from keras.callbacks import Callback
-from tqdm import tqdm
+import glob
+import bin.bybit_run
 
 pd.options.mode.chained_assignment = None
+import keras.backend
+from tqdm import tqdm
+import matplotlib.pyplot as plt
 import dataConstructor
-from sklearn import preprocessing
-from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.preprocessing import MinMaxScaler
 from os import environ
 
 environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import tensorflow as tf
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, LSTM, BatchNormalization
+from keras import layers
 from keras.callbacks import TensorBoard, ModelCheckpoint
 
+VERBOSE = 0
+GUI = None
+OUTCOME_TYPE = 'r'
+PARENT = None
 
-def set_targets(data: pd.DataFrame, target: str, future_p: int):
+
+class bcolors:
     """
-    Prepares target data from passed df in groups of var FUTURE_PERIOD
-
-    Required Arguments:
-        data(pd.DataFrame): data to be processed.
-        target(str): target symbol to have labels set to ie. "BTC"
-        future_p(int): number of future periods to have in label.
-
-    :returns
-        (pd.Dataframe): data modified with labels appended.
+    Terminal colors
     """
-    for i in range(future_p):
-        data[f'target_{i}'] = list(data[f'{target}_close'].shift(-i))
-    return data
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+def verbose_print(verbose: int, text: str, max_val: int = 0, update: int = 0, reset: bool = False):
+    """
+    Will print (x!=0) or withhold printing (x==0) to terminal depending on global VERBOSE value.
+    Will update GUI progress bad and text as long as MAX_VAL is >= 0
+    """
+    global GUI, PARENT
+    if PARENT is not None:
+        PARENT.check_kill()
+    if verbose != 0:
+        if text != '':
+            print(bin.bybit_run.bcolors.HEADER + text)
+
+    if GUI is not None and max_val >= 0:
+        update_progress(text, max_val, update, reset)
+
+
+def update_progress(text: str = '', max_value: int = 0, update: int = 0, reset: bool = False):
+    global GUI
+    if GUI is not None:
+        text = text[:30]
+        if reset:
+            GUI.prog_bar_train['value'] = 0
+            GUI.prog_bar_train['maximum'] = max_value
+            GUI.label_train_status['text'] = ''
+        if len(text) > 0:
+            escapes = ''.join([chr(char) for char in range(1, 32)])
+            GUI.label_train_status['text'] = text.translate(str.maketrans('', '', escapes))
+
+        GUI.prog_bar_train['value'] += update
+
+
+def _classify(current, future):
+    if float(future) > float(current):
+        return 1
+    else:
+        return 0
 
 
 def add_avgs(data: pd.DataFrame, moving_avg: list, ema: list):
@@ -53,27 +95,77 @@ def add_avgs(data: pd.DataFrame, moving_avg: list, ema: list):
     :returns
         (pd.Dataframe): data modified with moving averages appended.
     """
-    print('\tConstructing Moving avg and Exponential moving avg...')
-    total = 0
-    for col in data.columns:
-        if '_close' in col:
-            total += 1 * len(moving_avg) * len(ema)
-    with tqdm(total=total, unit=' Columns Created') as mavg_prog_bar:
-        if len(moving_avg) > 0:
-            for col in data.columns:
-                if '_close' in col:
-                    for sum_mavg in moving_avg:
-                        data[f'{col}_MA{sum_mavg}'] = data[col].rolling(window=sum_mavg).mean()
-                        mavg_prog_bar.update(1)
-                        if len(ema) > 0:
-                            for e in ema:
-                                data[f'{col}_{m}EMA{e}'] = data[f'{col}_MA{sum_mavg}'].ewm(span=e).mean()
-                                mavg_prog_bar.update(1)
+    verbose_print(VERBOSE, 'Constructing MA & EMA...', max_val=1, reset=True)
+
+    if len(moving_avg) > 0:
+        for col in data.columns:
+            if '_close' in col:
+                for sub_mavg in moving_avg:
+                    data[f'{col}_MA{sub_mavg}'] = data[col].rolling(window=sub_mavg).mean()
+                    if len(ema) > 0:
+                        for e in ema:
+                            data[f'{col}_EMA{sub_mavg}'] = data[f'{col}_MA{sub_mavg}'].ewm(span=e).mean()
+    data.dropna(inplace=True)
+    verbose_print(VERBOSE, '', update=1, reset=True)
+    return data
+
+
+def preprocess_data(data):
+    global VERBOSE
+    verbose_print(VERBOSE, 'Scaling Data...', max_val=len(data.columns), reset=True)
+    for col in tqdm(data.columns, unit=' column(s)', disable=not bool(VERBOSE)):
+        if col not in ['time']:
+            # data[col] = data[col].pct_change()
+            data.replace([np.inf, -np.inf], np.nan, inplace=True)
+            data[col] = MinMaxScaler(feature_range=(-1, 1)).fit_transform(data[col].values.reshape(-1, 1))
+            # data[col] = preprocessing.scale(data[col].values)
+        # data[col] = pd.to_numeric(data[col], downcast='integer')
+        data[col] = pd.to_numeric(data[col], downcast='float')
+        verbose_print(VERBOSE, '', update=1)
     data.dropna(inplace=True)
     return data
 
 
-def sequence_data(data: pd.DataFrame, sequence_len: int, future_p: int):
+def split_data(data):
+    # get first 70% | 20% | 10% split and normalize the data
+    data = preprocess_data(data)
+    train = data.iloc[:int(len(data.index) * 0.7)]
+    val = data.iloc[int(len(data.index) * 0.7):-int(len(data.index) * 0.1)]
+    test = data.iloc[-int(len(data.index) * 0.1):]
+    return train, val, test
+
+
+def set_targets(in_data: pd.DataFrame, target: str, future_p: int):
+    """
+    Prepares target data from passed df in groups of var FUTURE_PERIOD baced on OUTCOME_TYPE
+    if OUTCOME_TYPE == 'r' regression will be used else if OUTCOME_TYPE == 'c' classification will be used
+
+    Required Arguments:
+        data(pd.DataFrame): data to be processed.
+        target(str): target symbol to have labels set to ie. "BTC"
+        future_p(int): number of future periods to have in label.
+
+    :returns
+        (pd.Dataframe): data modified with labels appended.
+    """
+    global OUTCOME_TYPE
+    t_df = pd.DataFrame()
+    if OUTCOME_TYPE == 'r':
+        t_df['target'] = in_data[f'{target}_close'].shift(-future_p)
+    elif OUTCOME_TYPE == 'c':
+        t_df['future'] = in_data[f'{target}_close'].shift(-future_p)
+        t_df['target'] = list(map(_classify, in_data[f'{target}_close'], in_data['future']))
+        t_df.drop(columns=['future'], inplace=True)
+    else:
+        verbose_print(VERBOSE, f"ERROR: OUTCOME_TYPE:{OUTCOME_TYPE} not in: ['r','c']")
+        exit()
+    # in_data = (in_data - mean) / std
+    in_data = pd.concat([in_data, t_df], axis=1, join='inner')
+    in_data.dropna(inplace=True)
+    return in_data
+
+
+def sequence_data(data: pd.DataFrame, sequence_len: int):
     """
     Splits data into chunks of sequence_len
 
@@ -85,22 +177,26 @@ def sequence_data(data: pd.DataFrame, sequence_len: int, future_p: int):
     :returns
         (list,list):  tuple with x, and y data.
     """
+    global VERBOSE
+    verbose_print(VERBOSE, f'Appending ~{len(data.values)} Sequences', max_val=len(data.values), reset=True)
+    time.sleep(0.5)
     sequential_data = []
     seq = deque(maxlen=sequence_len)
-    for i in tqdm(data.values, unit=' Sequences Appended'):
-        seq.append([n for n in i[:-future_p]])
-        if len(seq) == SEQ_LEN:
-            sequential_data.append([np.array(seq), i[-future_p:]])
+    for i in tqdm(data.values, unit=' Sequences Appended', disable=not bool(VERBOSE)):
+        seq.append([n for n in i[:-1]])
+        if len(seq) == sequence_len:
+            sequential_data.append([np.array(seq), i[-1:]])
+        verbose_print(VERBOSE, '', update=1)
     x = []
     y = []
     for seq, target in sequential_data:
-        seq.shape = (sequence_len, len(data.columns))
         x.append(seq)
         y.append(target)
-    return x, y
+    return np.asarray(x), np.asarray(y)
 
 
-def build_data(data: pd.DataFrame, target: str, seq: int, future_p: int, moving_avg: list, ema: list):
+def build_data(data: pd.DataFrame, target: str, seq: int, future_p: int, drop: list, moving_avg: list,
+               ema: list, verbose: int = VERBOSE, test_only: bool = False):
     """
     Drops columns to drop.
     Splits data into training, validation and testing
@@ -120,161 +216,137 @@ def build_data(data: pd.DataFrame, target: str, seq: int, future_p: int, moving_
         (np.array() * 5, int, int): train_X, train_y, val_X, val_y, test_X, text_y, seq, features
     """
     # drop columns selected to be dropped.
-    if len(DROP_SYMBOLS) > 0:
-        for to_drop in DROP_SYMBOLS:
+    global VERBOSE
+    VERBOSE = verbose
+    if len(drop) > 0:
+        for to_drop in drop:
             data.drop(columns=[col for col in data.columns if to_drop in col], inplace=True)
     # add moving averages
     data = add_avgs(data=data, moving_avg=moving_avg, ema=ema)
+    features = len(data.columns)
+    data = set_targets(data, target=target, future_p=future_p)
 
-    # get first 70% | 20% | last 10%
-    train_df = data[:int(len(data.index) * 0.7)]
-    features = len(train_df.columns)
-    train_mean = train_df.mean()
-    train_std = train_df.std()
-    validation_df = data[int(len(data.index) * 0.7):-int(len(data.index) * 0.1)]
-    test_df = data[-int(len(data.index) * 0.1):]
+    train_df, validation_df, test_df = split_data(data)
     del data  # remove data to help memory.
-
-    # normalize data
-    train_df = (train_df - train_mean) / train_std
-    validation_df = (validation_df - train_mean) / train_std
-    test_df = (test_df - train_mean) / train_std
-
-    # append future price of number of periods in the future from future period
-    train_df = set_targets(train_df, target=target, future_p=future_p)
-    validation_df = set_targets(validation_df, target=target, future_p=future_p)
-    test_df = set_targets(test_df, target=target, future_p=future_p)
-
+    # append future price of number of periods in the future from future period and normalize data
+    # train_df = set_targets(train_df, target=target, future_p=future_p)
+    # validation_df = set_targets(validation_df, target=target, future_p=future_p)
+    # test_df = set_targets(test_df, target=target, future_p=future_p)
     # split data into chunks of seq size.
-    train_X, train_y = sequence_data(train_df, sequence_len=seq, future_p=future_p)
-    val_X, val_y = sequence_data(validation_df, sequence_len=seq, future_p=future_p)
-    test_X, test_y = sequence_data(test_df, sequence_len=seq, future_p=future_p)
-
-    print(f'Training Sequences:\t{len(train_X)}\nValidation Sequences:\t{len(val_X)}\nTest Sequences:\t{len(test_X)}')
-    return train_X, train_y, val_X, val_y, test_X, test_y, seq, features
+    if not test_only:
+        train_X, train_y = sequence_data(train_df, sequence_len=seq)
+        val_X, val_y = sequence_data(validation_df, sequence_len=seq)
+    test_X, test_y = sequence_data(test_df, sequence_len=seq)
+    if not test_only:
+        verbose_print(VERBOSE, f'Training Sequences:\t{len(train_X)}\nValidation Sequences:\t{len(val_X)}\nTest Sequences:\t{len(test_X)}',
+                      max_val=-1)
+        return train_X, train_y, val_X, val_y, test_X, test_y, features
+    else:
+        return test_X, test_y
 
 
 def make_model(seq: int, features: int):
     # Shape [batch, time, features] => [batch, time, lstm_units]
-    drop = [0.3, 0.3, 0.3, 0.3]
-    model = Sequential([
-        LSTM(16, input_shape=(None, seq, features), return_sequences=True, dropout=drop[0]),
-        LSTM(16, return_sequences=False, dropout=drop[2]),
-        BatchNormalization(),
+    m = Sequential([
+        # layers.Normalization(axis=1),
+        layers.GRU(128, input_shape=(seq, features), return_sequences=True),
+        layers.GRU(64, return_sequences=False),
+        # layers.GRU(64, return_sequences=False),
+        layers.Dropout(0.3),
+        layers.Dense(32),
+        layers.Dropout(0.3),
+        layers.Dense(8),
+        layers.Dense(1, activation='tanh')
     ])
-    # m.add(LSTM(16, return_sequences=True, dropout=drop[1]))
-    m.add()
-    m.add()
-    # m.add(Dense(32, activation='relu'))
-    m.add(Dropout(drop[3]))
-    m.add(Dense(16, activation='relu'))
-    m.add(Dense(2, activation='sigmoid'))
-    lr = 0.001
-    # lr = tf.keras.optimizers.schedules.CosineDecayRestarts(0.001, np.ceil(len(train_x) / BATCH_SIZE) * 20, 0.8, 0.8)
-    # op = tf.keras.optimizers.SGD(learning_rate=lr, nesterov=True)
+    m.summary()
+    """DECAY FIXED AND COSINE"""
+    lr = 0.0005
+    # lr = tf.keras.optimizers.schedules.CosineDecayRestarts(0.001, np.ceil(len(t_x_data) / batch_s) * 20, 0.8, 0.8)
+    """OPTIMIZERS"""
     op = tf.keras.optimizers.Adam(learning_rate=lr)
-    # *** TRY LOSS 'mean_squared_error' ***
-    # loss = keras.losses.BinaryCrossentropy()
-    loss = keras.losses.SparseCategoricalCrossentropy()
-    m.compile(loss=loss, optimizer=op, metrics=['accuracy'])
+    # op = tf.keras.optimizers.SGD(learning_rate=lr, nesterov=True)
+    """
+    LOSS FUNCTIONS                  | activation |  Loss
+    Regression:     numerical value:    Linear      MSE
+    Classification: binary outcome:     Sigmoid     BCE
+    Classification: single label:       Softmax     Cross Entropy
+    Classification: multi labels:       Sigmoid     BCE
+    """
+    loss = keras.losses.MeanSquaredError()
+    m.compile(loss=loss, optimizer=op)
+    return m
 
 
-def _classify(current, future):
-    if float(future) > float(current):
-        return 1
-    else:
-        return 0
-
-
-def _refine_data(cry, df):
-    for to_drop in DROP_SYMBOLS:
-        df.drop(columns=[col for col in df.columns if to_drop in col], inplace=True)
-    df['future'] = df[f'{cry}_close'].shift(-FUTURE_PERIOD)
-    df['target'] = list(map(_classify, df[f'{cry}_close'], df['future']))
-    df.drop(columns=['future'], inplace=True)
-    times = sorted(df.index.values)
-    last_5pct = 0  # times[-int(VAL_PCT * len(times))]
-    validation_main_df = df[(df.index >= last_5pct)]
-    df = df[(df.index < last_5pct)]
-    del times
-    t_x, t_y = _preprocess_df(df)
-    validation_x, validation_y = _preprocess_df(validation_main_df)
-    print(f'Train data: {len(t_x)} Validation: {len(validation_x)}')
-    print(f"TRAINING don't buys {t_y.count(0)}, Buys: {t_y.count(1)}")
-    print(f"VALIDATION don't buys: {validation_y.count(0)}, Buys {validation_y.count(1)}\n\n")
-    time.sleep(2)
-    return t_x, t_y, validation_x, validation_y
-
-
-def _preprocess_df(df):
-    for col in tqdm(df.columns, unit=' column(s)'):
-        if col not in ['target', 'time'] and 'Buy' not in col and 'Sell' not in col:
-            df[col] = df[col].pct_change()
-            df.replace([np.inf, -np.inf], np.nan, inplace=True)
-            df[col].dropna(inplace=True)
-            df[col] = preprocessing.scale(df[col].values)
-        df[col] = pd.to_numeric(df[col], downcast='integer')
-        df[col] = pd.to_numeric(df[col], downcast='float')
-
-    df.dropna(inplace=True)
-    df = df[[c for c in df if c not in ['target']] + ['target']]
-    df.sort_index(inplace=True)
-    sequential_data = []
-    prev_days = deque(maxlen=SEQ_LEN)
-    for i in tqdm(df.values, unit=' prev day(s) append'):
-        prev_days.append([n for n in i[:-1]])
-        if len(prev_days) == SEQ_LEN:
-            sequential_data.append([np.array(prev_days), i[-1]])
-    del df
-    random.shuffle(sequential_data)
-    buys = []
-    sells = []
-    for seq, target in sequential_data:
-        if target == 0:
-            sells.append([seq, target])
-        elif target == 1:
-            buys.append([seq, target])
-    del sequential_data
-    random.shuffle(buys)
-    random.shuffle(sells)
-    lower = min(len(buys), len(sells))
-    buys = buys[:lower]
-    sells = sells[:lower]
-    sequential_data = buys + sells
-    random.shuffle(sequential_data)
-    x = []
-    y = []
-    for seq, target in sequential_data:
-        x.append(seq)
-        y.append(target)
-    return x, y
-
-
-def _gen_model_name(cry, model):
-    summary_list = []
-    name = ''
-    model.summary(line_length=150, print_fn=lambda x: summary_list.append(x))
-    for line in summary_list[4:-5]:
-        line = line.replace(' ', '').replace('_', '').replace('=', '')
-        sub_line = line.split('(')[0]
-        if not sub_line:
-            continue
-        if 'batchnormalization' in sub_line:
-            name += 'BN_'
-        elif 'lstm' in sub_line:
-            name += f"L{line.split('(')[-1].split(')')[0].split(',')[-1]}_"
-        elif 'dense' in sub_line:
-            name += f"D{line.split('(')[-1].split(')')[0].split(',')[-1]}_"
+def gen_model(seq: int, features: int, model_args: list):
+    m = Sequential()
+    key = bin.bybit_run.LAYER_OPTIONS
+    ret_seq_layers = ['LSTM', 'GRU', 'RNN', 'SimpleRNN']
+    for count, layer in enumerate(model_args):
+        if layer[0] in ret_seq_layers:
+            ret_seq = False
+            if count < len(model_args) - 1 and model_args[count + 1][0] in ret_seq_layers:
+                ret_seq = True
+            if count == 0:
+                m.add(key[layer[0]](layer[1], input_shape=(seq, features), return_sequences=ret_seq))
+            else:
+                m.add(key[layer[0]](layer[1], return_sequences=ret_seq))
         else:
-            continue
+            if count == 0:
+                m.add(key[layer[0]](layer[1], input_shape=(seq, features)))
+            else:
+                m.add(key[layer[0]](layer[1]))
+        if count == len(model_args) - 1:
+            m.add(layers.Dense(1, activation='tanh'))
+    m.compile(loss=keras.losses.MeanSquaredError(), optimizer=tf.keras.optimizers.Adam())
+    return m
 
-    d = str(drop).replace(' ', '').replace(',', '_')
-    ma = str(MOVING_AVG).replace(' ', '').replace(',', '_')
-    ema_s = str(EMA_SPAN).replace(' ', '').replace(',', '_')
-    drop_col = ' '.join(DROP_SYMBOLS).strip().replace(' ', '_')
-    m_name = f'{cry}_{name}DROP{d}_B{BATCH_SIZE}_F{FUTURE_PERIOD}_{int(time.time())}'
-    m_args = f'S{SEQ_LEN}-MA{ma}-EMAspan{ema_s}-DSYM[{drop_col}]'
+
+def gen_model_name(model: keras.models, sym: str, b_s: int, fut_p: int, s_l: int, ma: list, ema: list, drop_col: list):
+    name = ''
+    c = 0
+    while True:
+        try:
+            layer = model.get_layer(index=c)
+            name += ''.join(l[0].upper() for l in layer._name.split('_') if not l.isdigit())
+            try:
+                name += f'{layer.units}'
+            except AttributeError:
+                try:
+                    name += f'{layer.rate}'
+                except AttributeError:
+                    pass
+            name += '_'
+        except ValueError:
+            break
+        c += 1
+
+    ma = str(ma).replace(' ', '').replace(',', '_')
+    ema_s = str(ema).replace(' ', '').replace(',', '_')
+    drop_col = ' '.join(drop_col).strip().replace(' ', '_')
+    m_name = f'{sym}_{name}B{b_s}_F{fut_p}_{int(time.time())}'
+    m_args = f'S{s_l}-MA{ma}-EMAS{ema_s}-DSYM[{drop_col}]'
+    verbose_print(VERBOSE, f'\n{m_name}\n{m_args}\n', max_val=-1)
     return m_name, m_args
+
+
+def plot_data(data, plot_name=None):
+    fig, axs = plt.subplots(1, len(data))
+    if len(data) == 1:
+        plot_d = data[0]
+        axs.set_title(plot_d[0], fontsize=10)
+        axs.plot(plot_d[1], 'tab:blue', label='Control')
+        axs.plot(plot_d[2], 'tab:green', label='Prediction')
+    else:
+        for c, plot_d in enumerate(data):
+            axs[c].set_title(plot_d[0], fontsize=10)
+            axs[c].plot(plot_d[1], 'tab:orange', label='Test')
+            axs[c].plot(plot_d[2], 'tab:green', label='Pred')
+
+    plt.legend()
+    if plot_name is not None:
+        plt.savefig(f'{plot_name}.png', bbox_inches='tight')
+    else:
+        plt.show()
 
 
 class LearningRateLogger(tf.keras.callbacks.Callback):
@@ -288,100 +360,172 @@ class LearningRateLogger(tf.keras.callbacks.Callback):
         logs["learning_rate"] = self.model.optimizer.lr
 
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-np.random.seed(7)
-THREADS = 2  # 2 max
-DATA_SIZE = 1000
-EPOCHS = 5
-DATA_PERIOD = 1  # in min [1, 3, 5, 15, 30, 60, 120, 240, 360, 720]
-# parameters
-BATCH_SIZE = [16]
-FUTURE_PERIOD = [3]
-SEQ_LEN = [120]
-DROP_SYMBOLS = []
-MOVING_AVG = [[5], [5, 10]]  # [5, 10, 30, 60]
-EMA_SPAN = [[4], [4, 8]]
+class UpdateProgressTraining(keras.callbacks.Callback):
 
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-if len(tf.config.list_physical_devices('GPU')) > 0:
-    print('\tUSING GPU\n')
-else:
-    print('\tCPU ONLY **\n')
+    def __init__(self, total_batches, total_epochs):
+        super().__init__()
+        self.current_batch = 1
+        self.total_batches = total_batches
+        self.current_epoch = 1
+        self.total_epochs = total_epochs
+        self.current_loss = 0
+        self.text = 'Epoch: {}/{} | Loss: {}'
 
-SYMBOLS, master_dataFrame = dataConstructor.get_data(iteration_count=DATA_SIZE, data_period=DATA_PERIOD,
-                                                     threads=THREADS)
+    def on_test_begin(self, logs=None):
+        pass
 
-master_dataFrame = master_dataFrame[:int(len(master_dataFrame.index) / 20)]
+    def on_test_batch_begin(self, batch, logs=None):
+        pass
 
-for sym in SYMBOLS:
-    if sym in DROP_SYMBOLS:
-        continue
+    def on_epoch_begin(self, epoch, logs=None):
+        self.current_epoch = epoch + 1
+        self._call_update(update_val=0, reset=True)
 
-    for seq_len in SEQ_LEN:
-        for future_period in FUTURE_PERIOD:
-            for mavg in MOVING_AVG:
-                for ema_span in EMA_SPAN:
-                    for batch_size in BATCH_SIZE:
-                        # split data into train, validation, and test chunks (70%,20%,10%)
-                        train_x, train_y, val_x, val_y, test = build_data(data=master_dataFrame,
-                                                                          target=sym, seq=seq_len, future_p=future_period,
-                                                                          moving_avg=mavg, ema=ema_span)
+    def on_batch_end(self, batch, logs=None):
+        global GUI
+        self.current_batch = batch + 1
+        self.current_loss = round(logs['loss'], 8)
+        PARENT.check_kill()
+        self._call_update(update_val=1, reset=False)
 
-    # make model
+    def _call_update(self, update_val, reset):
+        update_progress(text=self.text.format(self.current_epoch, self.total_epochs, self.current_loss),
+                        max_value=self.total_batches, update=update_val, reset=reset)
 
-    # train model
 
-    # test model
+def train(parent, gui, data_args: dict, model_args: list, verbose: int, force_new: bool, key: str, secret: str):
+    from keras.callbacks import LambdaCallback
+    from bin.bybit_run import Model as bb_Model
+    global VERBOSE, GUI, OUTCOME_TYPE, PARENT
+    GUI = gui
+    VERBOSE = verbose
+    OUTCOME_TYPE = 'r'
+    PARENT = parent
+    drop = []
 
-# TRY DROPPING EXCESS DATA IE: OPEN, LOW, HIGH PRICES
-for _ in range(1):
-    for cry in SYMBOLS:
-        if cry in DROP_SYMBOLS:
+    if len(tf.config.list_physical_devices('GPU')) > 0:
+        verbose_print(VERBOSE, '\tUSING GPU\n')
+    else:
+        verbose_print(VERBOSE, '\tUSING CPU\n')
+    s, master_dataFrame = dataConstructor.get_data(key=key, secret=secret, symbols=[data_args['target']], data_s=data_args['size'],
+                                                   data_p=data_args['period'], threads=4, force_new=force_new, verbose=VERBOSE)
+    raw_data = master_dataFrame.copy()
+    tr_x, tr_y, v_x, v_y, te_x, te_y, features = build_data(data=master_dataFrame, target=data_args['target'], seq=data_args['seq'],
+                                                            future_p=data_args['future'], drop=drop,
+                                                            moving_avg=data_args['ma'], ema=data_args['ema'])
+    active_model = gen_model(data_args['seq'], features, model_args)
+    model_name, model_args = gen_model_name(active_model, data_args['target'], data_args['batch'], data_args['future'],
+                                            data_args['seq'], data_args['ma'], data_args['ema'],
+                                            drop_col=[])
+
+    early_stop_callback = keras.callbacks.EarlyStopping(monitor="val_loss", min_delta=0, patience=data_args['epochs'] + 1, verbose=VERBOSE,
+                                                        mode="min", restore_best_weights=True, )
+
+    verbose_print(VERBOSE, f'\n'
+                           f'{"*" * 20}\n'
+                           f'Symbol:\t{data_args["target"]}\nSequence length:\t{data_args["seq"]}\nFuture prediction period:\t{data_args["future"]}\n'
+                           f'Moving Average(s):\t{data_args["ma"]}\nExponential Span:\t{data_args["ema"]}\n'
+                           f'{"*" * 20}\n', max_val=-1)
+    active_model.fit(tr_x, tr_y, batch_size=data_args['batch'], epochs=data_args['epochs'],
+                     validation_data=(v_x, v_y), use_multiprocessing=True, verbose=VERBOSE
+                     , callbacks=[early_stop_callback,
+                                  UpdateProgressTraining(total_batches=len(tr_x) // data_args['batch'], total_epochs=data_args['epochs'])])
+    keras.backend.clear_session()
+    # active_model.evaluate(te_x, te_y, batch_size=data_args['batch'])
+
+    ret_model = bin.bybit_run.Model(location=f'bin\\res\\models\\{model_name}__{model_args}', model=active_model,
+                                    seq=data_args["seq"], batch=data_args['batch'], future=data_args['future'], moving_avg=data_args["ma"],
+                                    e_moving_avg=data_args["ema"], drop=drop)
+    return raw_data, ret_model
+
+
+def run():
+    global VERBOSE, OUTCOME_TYPE
+    VERBOSE = 1
+    THREADS = 2  # 2 max
+    DATA_SIZE = 100
+    DIV_DATA = 1
+    EPOCHS = 2
+    DATA_PERIOD = 1  # in min [1, 3, 5, 15, 30, 60, 120, 240, 360, 720]
+    # parameters
+    OUTCOME_TYPE = 'r'  # r = regression | c = classification
+    BATCH_SIZE = [64, 128]
+    FUTURE_PERIOD = [5]
+    SEQ_LEN = [60, 120, 180]
+    DROP_SYMBOLS = []  # ['ETH', 'XRP', 'EOS']
+    MOVING_AVG = [[5, 10], [3, 5], []]  # [5, 10, 30, 60]
+    EMA_SPAN = [[4, 8], [3, 5]]
+
+    if len(tf.config.list_physical_devices('GPU')) > 0:
+        verbose_print(VERBOSE, '\tUSING GPU\n\n')
+    else:
+        verbose_print(VERBOSE, '\tCPU ONLY **\n')
+    key = 'jfCGTjZcCIuPDUbdDt'
+    secret = 'IHz2iqBanafGGuesd0w4QKjrQyUb2NDgQ0q1'
+    time.sleep(3)
+
+    SYMBOLS, master_dataFrame = dataConstructor.get_data(key=key, secret=secret, data_s=DATA_SIZE,
+                                                         data_p=DATA_PERIOD, threads=THREADS, )
+    back_up_data = master_dataFrame.iloc[:int(len(master_dataFrame.index) / DIV_DATA)]
+
+    plotting_data = []
+    SYMBOLS = ['BTC']
+    for symbol in SYMBOLS:
+        if symbol in DROP_SYMBOLS:
             continue
-        # if cry in ['BTC', 'XRP']:
-        #    continue
-        train_x, train_y, val_x, val_y = _refine_data(cry, master_dataFrame)
-        train_x = np.asarray(train_x)
-        print(train_x.shape)
-        print(train_x.shape[1:])
-        train_y = np.asarray(train_y)
-        val_x = np.asarray(val_x)
-        val_y = np.asarray(val_y)
 
-        m = Sequential()
-        drop = [0.3, 0.3, 0.3, 0.3]
-        m.add(LSTM(16, input_shape=(train_x.shape[1:]), return_sequences=True, dropout=drop[0]))
-        # m.add(LSTM(16, return_sequences=True, dropout=drop[1]))
-        m.add(LSTM(16, return_sequences=False, dropout=drop[2]))
-        m.add(BatchNormalization())
-        # m.add(Dense(32, activation='relu'))
-        m.add(Dropout(drop[3]))
-        m.add(Dense(16, activation='relu'))
-        m.add(Dense(2, activation='sigmoid'))
-        lr = 0.001
-        # lr = tf.keras.optimizers.schedules.CosineDecayRestarts(0.001, np.ceil(len(train_x) / BATCH_SIZE) * 20, 0.8, 0.8)
-        # op = tf.keras.optimizers.SGD(learning_rate=lr, nesterov=True)
-        op = tf.keras.optimizers.Adam(learning_rate=lr)
-        # *** TRY LOSS 'mean_squared_error' ***
-        # loss = keras.losses.BinaryCrossentropy()
-        loss = keras.losses.SparseCategoricalCrossentropy()
-        m.compile(loss=loss, optimizer=op, metrics=['accuracy'])
-        model_name, model_args = _gen_model_name(cry=cry, model=m)
-        print(f'\n{model_name}\n{model_args}\n')
-        # https://gist.github.com/jeremyjordan/5a222e04bb78c242f5763ad40626c452
-        tensorboard = TensorBoard(log_dir=f'log/{model_name}')
-        checkpoint_format = 'E{epoch:02d}-A{val_accuracy:.4f}-L{val_loss:.4f}'
-        checkpoint = ModelCheckpoint("models/{}/{}__{}.h5".format(model_name, checkpoint_format, model_args),
-                                     monitor='val_accuracy', verbose=1,
-                                     save_best_only=True, mode='max')
+        for seq_len in SEQ_LEN:
+            for future_period in FUTURE_PERIOD:
+                for mavg in MOVING_AVG:
+                    for ema_span in EMA_SPAN:
+                        master_dataFrame = back_up_data.copy()
+                        # split data into train, validation, and test chunks (70%,20%,10%)
+                        train_x, train_y, val_x, val_y, test_x, \
+                        test_y, data_features = build_data(data=master_dataFrame,
+                                                           target=symbol, seq=seq_len,
+                                                           future_p=future_period, drop=DROP_SYMBOLS,
+                                                           moving_avg=mavg, ema=ema_span)
 
-        history = m.fit(train_x, train_y, batch_size=BATCH_SIZE, epochs=EPOCHS, validation_data=(val_x, val_y),
-                        callbacks=[LearningRateLogger(), tensorboard, checkpoint])
-        x = train_x[0]
-        prediction = m.predict(train_x)
-        del m
-        keras.backend.clear_session()
+                        for batch_size in BATCH_SIZE:
+                            active_model = make_model(seq_len, data_features)
+                            model_name, model_args = gen_model_name(active_model, symbol, batch_size, future_period, seq_len, mavg,
+                                                                    ema_span,
+                                                                    DROP_SYMBOLS)
+                            tensorboard = TensorBoard(log_dir=f'log/{symbol}/{model_name}')
+                            if OUTCOME_TYPE == 'r':
+                                checkpoint_format = 'E{epoch:02d}-L{val_loss:.6f}'
+                                parent_dir = f'models/{symbol}'
+                                checkpoint = ModelCheckpoint(
+                                    "{}/{}/{}__{}.h5".format(parent_dir, model_name, checkpoint_format, model_args),
+                                    monitor='val_loss', verbose=2, save_best_only=True, mode='min')
+                            else:
+                                checkpoint_format = 'E{epoch:02d}-A{val_accuracy:.4f}-L{val_loss:.4f}'
+                                parent_dir = f'models/{symbol}'
+                                checkpoint = ModelCheckpoint(
+                                    "{}/{}/{}__{}.h5".format(parent_dir, model_name, checkpoint_format, model_args),
+                                    monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
+                            plt.clf()
+                            verbose_print(VERBOSE, f'\n'
+                                                   f'{"*" * 20}\n'
+                                                   f'Symbol:\t{symbol}\nSequence length:\t{seq_len}\nFuture prediction period:\t{future_period}\n'
+                                                   f'Moving Average(s):\t{mavg}\nExponential Span:\t{ema_span}\n'
+                                                   f'{"*" * 20}\n')
+                            history = active_model.fit(train_x, train_y, batch_size=batch_size, epochs=EPOCHS,
+                                                       validation_data=(val_x, val_y), use_multiprocessing=True
+                                                       , callbacks=[LearningRateLogger(), checkpoint])
+                            # [LearningRateLogger(), tensorboard, checkpoint]
+                            active_model.evaluate(test_x, test_y, batch_size=batch_size)
+                            prediction = active_model.predict(test_x)
+                            plot_name = f'{model_name}\n{model_args}'
+                            plotting_data = [[plot_name + ' *200*', test_y[:, 0][:200], prediction[:200]],
+                                             [plot_name, test_y[:, 0], prediction]]
+                            # plotting_data.append([plot_name + ' *100*', test_y[:, 0][:100], prediction[:100]])
+                            # plotting_data.append([plot_name, test_y[:, 0], prediction])
+                            del active_model
+                            keras.backend.clear_session()
+                            # plot_data(plotting_data, plot_name=model_name)
+                            plot_data(plotting_data)
 
-"""
-try percent change before moving avg and EMA
-"""
+
+if __name__ == '__main__':
+    run()
