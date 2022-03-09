@@ -6,6 +6,7 @@
 #    Nov 11, 2021 08:45:26 PM CST  platform: Windows NT
 import sys
 import tkinter as tk
+import tkinter.font
 import tkinter.ttk as ttk
 from bin import bybit_run as bybit_gui_support
 import os.path
@@ -89,8 +90,7 @@ class Toplevel1:
 
         self.style.configure('TNotebook.Tab', background=_bgcolor)
         self.style.configure('TNotebook.Tab', foreground=_fgcolor)
-        self.style.map('TNotebook.Tab', background=
-        [('selected', _compcolor), ('active', _ana2color)])
+        self.style.map('TNotebook.Tab', background=[('selected', _compcolor), ('active', _ana2color)])
         self.TNotebook1 = ttk.Notebook(self.side_frame)
         self.TNotebook1.place(relx=0.0, rely=0.0, relheight=1.0, relwidth=1.0)
         self.TNotebook1.configure(takefocus="")
@@ -102,6 +102,10 @@ class Toplevel1:
         self.TNotebook1.add(self.TNotebook1_t2, padding=3)
         self.TNotebook1.tab(1, text="Options", compound="left", underline="-1", )
         self.TNotebook1_t2.configure(background="#d9d9d9", highlightbackground="#d9d9d9", highlightcolor="black")
+        self.TNotebook1_t3 = tk.Frame(self.TNotebook1)
+        self.TNotebook1.add(self.TNotebook1_t3, padding=3)
+        self.TNotebook1.tab(2, text="Training", compound="left", underline="-1", )
+        self.TNotebook1_t3.configure(background="#d9d9d9", highlightbackground="#d9d9d9", highlightcolor="black")
 
         self.label_testing = ttk.Label(self.TNotebook1_t1)
         self.label_testing.place(relx=0.034, rely=0.016, height=40, width=120)
@@ -269,10 +273,11 @@ class Toplevel1:
         self.btn_start_stop.place(x=10, rely=0.870, height=60, width=260)
         self.btn_start_stop.configure(takefocus="", text='Loading')
         self.btn_start_stop.state(['disabled'])
-
+        """
         # ************************************
         # tab 2 OPTIONS
         # ************************************
+        """
         self.label_opt_testing = ttk.Label(self.TNotebook1_t2)
         self.label_opt_testing.place(relx=0.034, rely=0.016, height=40, width=120)
         self.label_opt_testing.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 20", relief="flat",
@@ -291,7 +296,7 @@ class Toplevel1:
         self.label_api_key_enter.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 12", relief="flat",
                                            anchor='e', justify='right', text='API Key')
 
-        self.entry_api_key = ttk.Entry(self.TFrame1, textvariable=bybit_gui_support.api_key_entry)
+        self.entry_api_key = ttk.Entry(self.TFrame1)
         self.entry_api_key.place(relx=0.339, rely=0.125, relheight=0.313, relwidth=0.607)
         self.entry_api_key.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 11")
 
@@ -300,7 +305,7 @@ class Toplevel1:
         self.label_api_secret_enter.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 12", relief="flat",
                                               anchor='e', justify='right', text='API Secret')
 
-        self.entry_api_secret = ttk.Entry(self.TFrame1, textvariable=bybit_gui_support.api_secret_entry)
+        self.entry_api_secret = ttk.Entry(self.TFrame1)
         self.entry_api_secret.place(relx=0.339, rely=0.563, relheight=0.313, relwidth=0.607)
         self.entry_api_secret.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 11")
 
@@ -311,9 +316,163 @@ class Toplevel1:
         self.TFrame2 = ttk.Frame(self.TNotebook1_t2)
         self.TFrame2.place(relx=0.034, rely=0.272, relheight=0.345, relwidth=0.946)
         self.TFrame2.configure(relief='groove', borderwidth="2")
+        """
+        # ************************************
+        # tab 3 TRAINING
+        # ************************************
+        """
+        self.label_opt_training = ttk.Label(self.TNotebook1_t3)
+        self.label_opt_training.place(relx=0.034, rely=0.016, height=40, width=240)
+        self.label_opt_training.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 20", relief="flat",
+                                          anchor='w', justify='left', text='Model Training')
 
+        self.FrameTraining1 = ttk.Frame(self.TNotebook1_t3)
+        self.FrameTraining1.place(relx=0.034, rely=0.085, height=220, relwidth=0.946)
+        self.FrameTraining1.configure(relief='groove', borderwidth="2")
+        label_height, field_height = 22, 20
+
+        self.label_target = ttk.Label(self.FrameTraining1)
+        self.label_target.place(x=1, y=1, height=label_height, width=90)
+        self.label_target.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                    anchor='e', justify='right', text='Target:')
+
+        self.combo_box_target = ttk.Combobox(self.FrameTraining1, textvariable=bybit_gui_support.train_symbol)
+        self.combo_box_target.place(x=96, y=3, height=field_height, width=50)
+        self.combo_box_target.configure(background="#d9d9d9", font="-family {Segoe UI} -size 9")
+        self.combo_box_target['values'] = bybit_gui_support.SYMBOLS
+        self.combo_box_target.current(0)
+        self.combo_box_target['state'] = 'readonly'
+
+        self.label_future_p = ttk.Label(self.FrameTraining1)
+        self.label_future_p.place(x=1, y=25, height=label_height, width=90)
+        self.label_future_p.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                      anchor='e', justify='right', text='Future:')
+
+        self.entry_future_p = EntryInt(self.FrameTraining1)
+        self.entry_future_p.place(x=96, y=27, height=field_height, width=50)
+        self.entry_future_p.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.label_future_p_min = ttk.Label(self.FrameTraining1)
+        self.label_future_p_min.place(x=148, y=25, height=label_height, width=25)
+        self.label_future_p_min.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 9", relief="flat",
+                                          anchor='e', justify='right', text='min')
+
+        self.label_data_size = ttk.Label(self.FrameTraining1)
+        self.label_data_size.place(x=1, y=49, height=label_height, width=90)
+        self.label_data_size.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                       anchor='e', justify='right', text='Data Size:')
+        self.entry_data_size = EntryInt(self.FrameTraining1)
+        self.entry_data_size.place(x=96, y=51, height=field_height, width=50)
+        self.entry_data_size.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.label_data_period = ttk.Label(self.FrameTraining1)
+        self.label_data_period.place(x=1, y=71, height=label_height, width=90)
+        self.label_data_period.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                         anchor='e', justify='right', text='Data Period:')
+        self.entry_data_period = EntryInt(self.FrameTraining1)
+        self.entry_data_period.place(x=96, y=73, height=field_height, width=50)
+        self.entry_data_period.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.label_data_period_min = ttk.Label(self.FrameTraining1)
+        self.label_data_period_min.place(x=148, y=71, height=label_height, width=25)
+        self.label_data_period_min.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 9", relief="flat",
+                                             anchor='e', justify='right', text='min')
+
+        self.label_epoch = ttk.Label(self.FrameTraining1)
+        self.label_epoch.place(x=1, y=93, height=label_height, width=90)
+        self.label_epoch.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                   anchor='e', justify='right', text='Epoch(s):')
+        self.entry_epoch = EntryInt(self.FrameTraining1)
+        self.entry_epoch.place(x=96, y=95, height=field_height, width=50)
+        self.entry_epoch.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.label_seq_len = ttk.Label(self.FrameTraining1)
+        self.label_seq_len.place(x=1, y=117, height=label_height, width=90)
+        self.label_seq_len.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                     anchor='e', justify='right', text='Seq Length:')
+        self.entry_seq_len = EntryInt(self.FrameTraining1)
+        self.entry_seq_len.place(x=96, y=119, height=field_height, width=50)
+        self.entry_seq_len.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.label_batch_size = ttk.Label(self.FrameTraining1)
+        self.label_batch_size.place(x=1, y=141, height=label_height, width=90)
+        self.label_batch_size.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                        anchor='e', justify='right', text='Batch Size:')
+        self.entry_batch_size = EntryInt(self.FrameTraining1)
+        self.entry_batch_size.place(x=96, y=143, height=field_height, width=50)
+        self.entry_batch_size.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.label_ma = ttk.Label(self.FrameTraining1)
+        self.label_ma.place(x=1, y=165, height=label_height, width=90)
+        self.label_ma.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                anchor='e', justify='right', text='Moving Avg:')
+        self.entry_ma = tk.Entry(self.FrameTraining1)
+        self.entry_ma.place(x=96, y=167, height=field_height, width=100)
+        self.entry_ma.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.label_ema = ttk.Label(self.FrameTraining1)
+        self.label_ema.place(x=1, y=189, height=label_height, width=90)
+        self.label_ema.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 11", relief="flat",
+                                 anchor='e', justify='right', text='EM Avg:')
+        self.entry_ema = tk.Entry(self.FrameTraining1)
+        self.entry_ema.place(x=96, y=191, height=field_height, width=100)
+        self.entry_ema.configure(takefocus="", cursor="ibeam", font="-family {Segoe UI} -size 9")
+
+        self.training_fields = [self.combo_box_target, self.entry_future_p, self.entry_data_size, self.entry_data_period, self.entry_epoch,
+                                self.entry_seq_len, self.entry_batch_size, self.entry_ma, self.entry_ema]
+
+        self.label_opt_model = ttk.Label(self.TNotebook1_t3)
+        self.label_opt_model.place(relx=0.101, y=270, height=26, width=65)
+        self.label_opt_model.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 16", relief="flat",
+                                       anchor='n', justify='left', text='Model')
+
+        self.FrameTraining2 = ttk.Frame(self.TNotebook1_t3)
+        self.FrameTraining2.place(relx=0.034, y=302, height=210, relwidth=0.946)
+        self.FrameTraining2.configure(relief='groove', borderwidth="2")
+
+        self.model_layer_lst = {'count': 0, 'list': []}
+
+        self.btn_sub_layer = ttk.Button(self.FrameTraining2, command=lambda: bybit_gui_support.model_struct_row())
+        self.btn_sub_layer.place(x=152, y=2, height=24, width=24)
+        self.btn_sub_layer.configure(takefocus="", text='-')
+
+        self.label_ema = ttk.Label(self.FrameTraining2)
+        self.label_ema.place(x=181, y=1, height=25, width=45)
+        self.label_ema.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 13", relief="flat",
+                                 anchor='e', justify='right', text='Layer')
+
+        self.btn_add_layer = ttk.Button(self.FrameTraining2,
+                                        command=lambda: bybit_gui_support.model_struct_row(layer=bybit_gui_support.DEFAULT_BLUEPRINT_LAYER))
+        self.btn_add_layer.place(x=230, y=2, height=24, width=24)
+        self.btn_add_layer.configure(takefocus="", text='+')
+
+        self.checkbutton_new_data = ttk.Checkbutton(self.TNotebook1_t3)
+        self.checkbutton_new_data.place(relx=0.034, y=520, height=22, width=95)
+        self.checkbutton_new_data.configure(text='Use New Data')
+        self.checkbutton_new_data.invoke()
+
+        self.checkbutton_verbose = ttk.Checkbutton(self.TNotebook1_t3)
+        self.checkbutton_verbose.place(relx=0.034, y=540, height=22, width=85)
+        self.checkbutton_verbose.configure(text='Verbose')
+        self.checkbutton_verbose.state(['!alternate'])
+
+        self.btn_start_train = ttk.Button(self.TNotebook1_t3, command=lambda: bybit_gui_support.train_model())
+        self.btn_start_train.place(relx=0.034, y=565, height=30, width=85)
+        self.btn_start_train.configure(takefocus="", text='Start Training')
+
+        self.label_train_status = ttk.Label(self.TNotebook1_t3)
+        self.label_train_status.place(relx=0.370, y=545, height=22, width=170)
+        self.label_train_status.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 9", relief="flat",
+                                          anchor='w', justify='left', text='')
+
+        self.prog_bar_train = ttk.Progressbar(self.TNotebook1_t3, orient="horizontal", mode="determinate")
+        self.prog_bar_train.place(relx=0.37, y=572, height=15, width=170)
+
+        """
+        END OF TAB 3
+        """
         self.label_model_arr = []
-        self.btn_load_model_arr = []
+        self.btn_gen_model_arr = []
         self.btn_info_log_model_arr = []
         self.text_model_name_arr = []
         for count, c in enumerate(bybit_gui_support.SYMBOLS):
@@ -324,10 +483,10 @@ class Toplevel1:
                                  justify='left', text=f'{c} Model:')
             self.label_model_arr.append(label_name)
 
-            btn_load = ttk.Button(self.TFrame2, command=lambda: bybit_gui_support.load_model_btn(c))
-            btn_load.place(x=115, y=y_pos, height=30, width=70)
-            btn_load.configure(takefocus="", text='Load')
-            self.btn_load_model_arr.append(btn_load)
+            btn_gen = ttk.Button(self.TFrame2, command=lambda: bybit_gui_support.load_model_btn(c))
+            btn_gen.place(x=115, y=y_pos, height=30, width=70)
+            btn_gen.configure(takefocus="", text='Gen')
+            self.btn_gen_model_arr.append(btn_gen)
             btn_info_log = ttk.Button(self.TFrame2, command=lambda: bybit_gui_support.get_model_info(c, return_str=False))
             btn_info_log.place(x=185, y=y_pos, height=30, width=70)
             btn_info_log.configure(takefocus="", text='Info')
@@ -472,6 +631,25 @@ class Toplevel1:
         self.text_prediction.configure(background="#d9d9d9", foreground="#000000", font="-family {Segoe UI} -size 16", relief="flat",
                                        anchor='ne',
                                        justify='left', text='-')
+
+
+class EntryInt(ttk.Entry):
+    def __init__(self, master=None, **kwargs):
+        self.var = tk.StringVar()
+        tk.Entry.__init__(self, master, textvariable=self.var, **kwargs)
+        self.old_value = ''
+        self.var.trace('w', self.check)
+        self.get, self.set = self.var.get, self.var.set
+
+    def check(self, *args):
+        if self.get().isdigit():
+            # the current value is only digits; allow this
+            self.old_value = self.get()
+        elif len(self.get()) == 0:
+            self.set(0)
+        else:
+            # there's non-digit characters in the input; reject this
+            self.set(self.old_value)
 
 
 def new_model_info_window(info_window_class, summary):
