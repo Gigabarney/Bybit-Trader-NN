@@ -4,6 +4,8 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # change tensorflow logs to not show.
 from keras.models import load_model
 from keras import layers
 import pandas as pd
+
+pd.options.mode.chained_assignment = None
 from math import ceil
 import random
 from bybit import bybit
@@ -20,7 +22,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import seaborn as sns
 import ccxt
 
-# ******************************
 '''
 Created by: Eric Kelm
     automatically trade cryptocurrencies from ByBit. with the help of a Neral network.
@@ -33,7 +34,7 @@ Created by: Eric Kelm
 
 
 class Bcolors:
-    """ Terminal color codes """
+    """Terminal color codes"""
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKCYAN = '\033[96m'
@@ -46,7 +47,7 @@ class Bcolors:
 
 
 class PlotTypes:
-    """ Types of plots that can be created """
+    """Types of plots that can be created"""
     price = 'Price'
     balance = 'Balance'
     both = 'Both'
@@ -54,6 +55,7 @@ class PlotTypes:
 
 
 class DataPeriods:
+    """Periods data can be loaded in from bybit"""
     min1, min3, min5, min15, min30 = 1, 3, 5, 15, 30
     hour1, hour2, hour4, hour6, hour12 = 60, 120, 240, 360, 720
     all = {'1 min': min1, '3 min': min3, '5 min': min5, '15 min': min15, '30 min': min30,
@@ -61,39 +63,39 @@ class DataPeriods:
 
 
 class StartStopBtnText:
-    """ Different text options for button """
+    """Different text options for start trade button"""
     start = 'Start Trading'
     stop = 'Stop Trading'
     loading = 'Loading'
 
 
 class LocalBybit:
-    """
-    Bybit client object creator
-    Option to change leverage on bybit account
-    """
+    """Bybit client object"""
 
     @staticmethod
     def set_client(key, secret):
+        """Create bybit client object with api key and secret"""
         return bybit(test=False, api_key=key, api_secret=secret)
 
     @staticmethod
     def set_leverage(symbol, leverage):
+        """Set bybit account leverage"""
         global CLIENT
         return CLIENT.Positions.Positions_saveLeverage(symbol=f'{symbol}USD', leverage=str(leverage))
 
 
 class Exchange:
-    """ Bybit client object creator """
+    """CCXT client object"""
 
     @staticmethod
     def set_client(key, secret):
+        """Create ccxt bybit client with api key and secret"""
         return ccxt.bybit({'options': {'adjustForTimeDifference': True, },
                            'apiKey': key, 'secret': secret, })
 
 
 class Symbols:
-    """ Symbols that can be traded via bybit with list option"""
+    """Symbols that can be traded via bybit with list option"""
     BTC = 'BTC'
     ETH = 'ETH'
     XRP = 'XRP'
@@ -103,11 +105,7 @@ class Symbols:
 
 class Position:
     """
-    Holds the users current position (buy or sell)
-    as well as order quantity current and past, last order values,current prediction, and
-    maker and taker fees.
-
-    Doc with trading and other fees
+    Holds current session trading position
     https://learn.bybit.com/bybit-guide/bybit-trading-fees/
     """
     current_qty, past_qty = 0, 0
@@ -117,6 +115,7 @@ class Position:
     taker_fee = 0.05
 
     def __init__(self, symbol=None, ):
+        """init position object"""
         if symbol is None:
             symbol = Symbols.BTC
         self.symbol = symbol
@@ -125,6 +124,7 @@ class Position:
         self.last_order_value = ['none', 0]
 
     def update(self, symbol=None, qty=None, position=None, leverage=None):
+        """Update position valued and past position values"""
         if symbol is not None:
             self.set_symbol(symbol)
         if qty is not None:
@@ -134,28 +134,28 @@ class Position:
         self.p = position
 
     def set_symbol(self, new_symbol):
+        """Updates symbol att and past symbol att"""
         global CONF
         self.past_symbol = self.symbol
         self.symbol = new_symbol
         CONF.def_coin = new_symbol
 
     def set_qty(self, qty):
+        """Updates quantity att and past quantity att"""
         self.past_qty = self.current_qty
         self.current_qty = qty
 
     def place_trade(self, side, symbol, amount):
+        """
+        Checks if testing, updates leverage, and places a trade to bybit exchange for given side,symbol,and amount.
+        If testing updated testing values
+        """
         global EXCHANGE, TESTING_PROFIT, CONF, LEVERAGE, CLIENT
         out = 'TESTING LOCK'
         if self.past_leverage != CONF.leverage:
             LocalBybit.set_leverage(symbol, CONF.leverage)
         if not (HARD_TESTING_LOCK or CONF.testing):
-            x = 'IS THIS SUPPOSE TO HAPPEN YET...'
-            x = 'IS THIS SUPPOSE TO HAPPEN YET...'
-            x = 'IS THIS SUPPOSE TO HAPPEN YET...'
-            x = 'IS THIS SUPPOSE TO HAPPEN YET...'
-            x = 'IS THIS SUPPOSE TO HAPPEN YET...'
             out = 'Hold'
-            print(Bcolors.FAIL + '\t[]*!*!* REAL TRADE ATTEMPTED *!*!*[]')
             self.p = side
             if side == 'buy':
                 out = EXCHANGE.create_market_buy_order(symbol=f"{symbol}/USD", amount=amount)['id']
@@ -174,6 +174,7 @@ class Position:
         return Bcolors.OKCYAN + out + Bcolors.ENDC
 
     def cancel_trades(self):
+        """Cancels any trades that are outstanding in any symbol"""
         order = 'No orders canceled.'
         if not (HARD_TESTING_LOCK or CONF.testing):
             if EXCHANGE.fetch_balance()[self.symbol]['used'] > 0.0:
@@ -203,21 +204,13 @@ class LayerOptions:
 
 class Model:
     """
-    Create model object
-    Contains:   location, sequence size, batch size, future prediction period,
-                moving avg list, exponential moving avg list, symbols to drop list,
-                Data time frame period, and the layers in model.
-    Loads keras model from location given.
-
-    dump:   Save model and return dictionary of model properties (used in config file)
-    move_model: Move model to different directory
-    delete_model:   Delete model from disk
-    clear:  Delete and reset model object
-    prediction: Used passed data to make a prediction on the next price movement of future_p in the future
-    get_max_datasize:   Returns max size the data needed to predict on model
+    Model object.
+    information about the model needed to train and prep the data
+    to be predicted.
     """
 
     def __init__(self, **kwargs):
+        """init model class and load model from disk if passed location"""
         self.location = kwargs.get('location')
         if self.location is not None and self.location.split('.')[-1] == 'h5':
             self.model = kwargs.get('model')
@@ -249,12 +242,14 @@ class Model:
             self.layers = None
 
     def dump(self):
+        """Returns dict of model atts"""
         if self.model is not None and self.location is not None:
             self.model.save(self.location)
         return {'location': self.location, 'seq': self.seq, 'batch': self.batch, 'future': self.future_p, 'moving_avg': self.moving_avg,
                 'e_moving_avg': self.e_moving_avg, 'drop': self.drop_symbols, 'period': self.data_period, 'layers': self.layers}
 
     def move_model(self, n_location):
+        """Moves model file to a new location on disk"""
         import os
         os.rename(self.location, n_location)
         try:
@@ -264,15 +259,21 @@ class Model:
         self.location = n_location
 
     def delete_model(self):
+        """Delete model from disk"""
         if self.location is not None and os.path.isfile(self.location):
             os.remove(self.location)
             self.location = None
 
     def clear(self):
+        """Delete model and re initialize class"""
         self.delete_model()
         self.__init__()
 
     def prediction(self, data: pd.DataFrame(), symbol):
+        """
+        Gets new data from bybit and makes prediction with model att.
+        Returns 'buy' if prediction is higher than last closing price, and 'sell' vise versa
+        """
         from bin.networkTraining import Training
         import numpy as np
         global CONF
@@ -290,6 +291,7 @@ class Model:
             return 'sell'
 
     def get_max_datasize(self):
+        """Returns max data size needed to train the model. if model class not fully initialize will return DATA_SIZE"""
         if self.seq is not None:
             if self.moving_avg is not None and self.e_moving_avg is not None \
                     and len(self.moving_avg) + len(self.e_moving_avg) > 0:
@@ -301,17 +303,13 @@ class Model:
 class Config:
     """
     Configuration file object.
-
-    load_file: loads configuration file passed and checks it against default configuration
-
-    write_config: wright config file content to ".yaml" file to disk and print "SAVED" in green.
-
-    default_config: returns default configuration file
+    load and write yaml file to and from disk.
     """
 
-    DATA_SIZE = 120
+    DATA_SIZE = 120  # default data size
 
     def __init__(self, filepath=None):
+        """init config class and loads default config from disk"""
         if filepath is None:
             c = self.default_config()
         else:
@@ -357,16 +355,9 @@ class Config:
         self.write_config()
 
     def load_file(self, filepath):
-        """
-        Loads config file. If the file is not found replace with a default one and passes values to GUI.
-        If error occurs loading user config file more than 3 times it will be over written with the default config file.
-            Old config file will be renamed to: CONFIG_FILE_NAME.yaml.old
-
-        Exits after config files checked to be corrupt or Incorrect Structure.
-        """
+        """Loads config yaml file from disk"""
         global w
         global CONFIG_FILE_PATH
-
         try:
             with open(filepath, 'r') as file:
                 conf = yaml.safe_load(file)
@@ -380,16 +371,7 @@ class Config:
         return conf
 
     def _checksum_config(self, conf: dict):
-        """
-        checksum_config(conf: dict)
-        Compares check of config to default config for errors.
-
-        Required Argument:
-            config(dict):   Dictionary to checksum.
-
-        :returns
-            (str)   Hashed dictionary keys.
-        """
+        """Compares keys in default config file to passed config file"""
         conf_sum = ''
         for key in self._rec_config(conf):
             conf_sum += key
@@ -399,16 +381,7 @@ class Config:
         return hash(default_sum) == hash(conf_sum)
 
     def _rec_config(self, dictionary: dict):
-        """
-        rec_config(dictionary: dict)
-
-        Recursively goes through provided dict to get all keys.
-
-        Required Arguments:
-            dictionary(dict): dict to be iterated over.
-        :returns
-            (str)   Keys from dictionary.
-        """
+        """recursively iterate through dictionary"""
         for key, value in dictionary.items():
             if type(value) is dict:
                 yield key
@@ -417,6 +390,7 @@ class Config:
                 yield key
 
     def write_config(self):
+        """Write config file to disk"""
         c = {'user': {'api_key': self.key, 'api_secret': self.secret},
              'settings': {'def_coin': self.def_coin, 'leverage': self.leverage, 'plot_display': self.plot_display,
                           'balance_plot_period': self.balance_plot_period,
@@ -435,10 +409,10 @@ class Config:
                 c['settings'][f'{k.lower()}_model'] = Model().dump()
         with open(CONFIG_FILE_PATH, 'w') as output:
             yaml.dump(c, output, sort_keys=False, default_flow_style=False)
-        # print(bcolors.OKGREEN + 'Configuration File Saved.')
 
     @staticmethod
     def default_config():
+        """Default config file. incase user config file is corupt or missing"""
         return {'user': {'api_key': None, 'api_secret': None},
                 'settings': {'def_coin': Symbols.BTC, 'leverage': 1, 'plot_display': PlotTypes.price,
                              'balance_plot_period': list(BALANCE_PERIODS_DICT)[0],
@@ -455,36 +429,28 @@ class Config:
 
 class AsyncFetchBalance(threading.Thread):
     """
-    AsyncFetchBalance(gui, key, secret, tag='fetch_balance')
-
-    Thread to get balance from bybit using API info provided.
-    Updates balance as well as throws: ccxt.errors.AuthenticationError if API key or secret is invalid.
-
-    Prints duration thread run &
-            value balance changed to console via: print_finish_thread()
-    Prints Authentication to console.
-
-    Required Arguments:
-        gui (bybit_gui.Toplevel1): GUI interface.
-        key (str): API key from bybit
-        secret (str): API secret from bybit
-
-    Optional Keyword Arguments:
-        tag(str) = 'fetch_balance':    Unique tag to keep track of this thread in pool.
+    Thread
+    Get account balance from bybit with provided api key and secret.
+    Display and print to console a warning if api key or secret is invalid
     """
 
     tag = 'fetch_balance'
 
     def __init__(self, key: str, secret: str):
+        """init fetch balance thread"""
         super().__init__()
         self.key = key
         self.secret = secret
         self.st = 0
-        # https://www.pythontutorial.net/tkinter/tkinter-thread/
 
     def run(self):
+        """
+        Get account balance associated with api key and secret. Display error on gui if Authentication Error
+        Print tag, thread duration, and passed arguments when thread is done.
+        """
         global CONF, BALANCE_DF, EXCHANGE, TESTING_PROFIT
         self.st = time.time()
+        args = []
         try:
             t_count = 0
             while True:
@@ -494,8 +460,8 @@ class AsyncFetchBalance(threading.Thread):
                 except ccxt.errors.NetworkError:
                     t_count += 1
                     if t_count > 10:
-                        print_finish_thread(self.tag, self.st, [f'CCXT can not connect to servers. Please try again later.'])
-                        return
+                        args = [f'CCXT can not connect to servers. Please try again later.']
+                        raise ccxt.errors.NetworkError
                     time.sleep(0.5)
             balance_usd = {s: (crypto_balances[s] * EXCHANGE.fetch_ticker(f'{s}/USD')['close']) for s in Symbols.all}
             s_bal = round(sum(balance_usd.values()), 10)
@@ -505,7 +471,6 @@ class AsyncFetchBalance(threading.Thread):
                 CONF.total_profit += change
             CONF.last_cap_bal = s_bal
             d_time = int(time.time() - (time.time() % 60))
-
             if len(BALANCE_DF.index) > 0 and BALANCE_DF['Time'].values[-1] != d_time:
                 BALANCE_DF = pd.concat(
                     [BALANCE_DF, pd.DataFrame([[d_time, s_bal, s_bal + TESTING_PROFIT]], columns=['Time', 'Balance', 'Test Balance'])])
@@ -514,10 +479,8 @@ class AsyncFetchBalance(threading.Thread):
             for count, s in enumerate(Symbols.all):
                 w.text_amount_arr[count]['text'] = crypto_balances[s]
                 w.text_usd_arr[count]['text'] = f'({conv_currency_str(balance_usd[s])} USD)'
-
-            print_finish_thread(self.tag, self.st, [f'Change: {conv_currency_str(change)}'])
+            args = [f'Change: {conv_currency_str(change)}']
         except ccxt.errors.AuthenticationError:
-            print(Bcolors.WARNING + '\n[!] Authentication Error\n\tCheck API key and secret and try again')
             for rb_label in w.text_amount_arr:
                 rb_label['text'] = ''
             for rb_label2 in w.text_usd_arr:
@@ -526,86 +489,59 @@ class AsyncFetchBalance(threading.Thread):
             w.text_usd_arr[0]['text'] = 'Error'
             w.text_amount_arr[2]['text'] = 'Check API Key'
             w.text_usd_arr[2]['text'] = 'and Secret'
+            args = ['[!] Authentication Error\n\tCheck API key and secret and try again']
+        finally:
+            print_finish_thread(self.tag, self.st, args=args)
 
 
 class AsyncDataHandler(threading.Thread):
     """
-    AsyncDataHandler(gui, current_data, client, symbols, fetch_plot_delay=0.0, tag='data_handler')
-
-    Thread to get price data from bybit servers using API info provided via client.
-    After data collected will start: AsyncFetchPlot()  and if enabled will start: AsyncFetchPrediction()
-
-    Prints duration thread run via: print_finish_thread() &
-            avg api calls per second and minute via: bybit_data_handler.Handler()
-
-    Required Arguments:
-        gui(bybit_gui.Toplevel1):  GUI interface.
-        current_data(pandas.Dataframe):    Crypto data pulled from ByBit.
-        client(bybit):  Initialized bybit client with api key and secret.
-        symbols(list):  List of crypto symbols to get from bybit api.
-
-    Optional Keyword Arguments:
-        fetch_plot_delay(float) = 0.0:  Start delay to be passed to: AsyncFetchPlot()
-        tag(str) = 'data_handler':   Unique tag to keep track of this thread in pool.
+    Thread
+    collect price data from bybit server
+    then calls 'AsyncFetchPlot' with a delay if set via 'fetch_plot_delay'
+    and calls 'AsyncPlaceTrade' if currently trading
     """
 
     tag = 'data_handler'
 
     def __init__(self, verbose=0, fetch_plot_delay=0.0):
+        """init data handler thread"""
         super().__init__()
         self.fetch_plot_delay = fetch_plot_delay
         self.verbose = verbose
         self.st = 0
-        # https://www.pythontutorial.net/tkinter/tkinter-thread/
 
     def run(self):
+        """
+        Run data handler. Set 'MAIN_DF' with new price data from bybit
+        Print tag, thread duration, and passed arguments
+        """
         from bin import data
-        global MAIN_DF, CONF, DATA_SIZE, CLIENT, TRADING_COUNT
+        global MAIN_DF, CONF, DATA_SIZE, TRADING_COUNT, CLIENT
         self.st = time.time()
         symbol = Symbols.all[TRADING_CRYPTO.get()]
-        DATA_SIZE = CONF.models.get(symbol).get_max_datasize()  # max(x.get_max_datasize() for x in CONF.models.values())
-        MAIN_DF = data.Constructor(None, CONF.key, CONF.secret, data_s=ceil(DATA_SIZE / 200),
-                                   force_new=True).get_data()[-DATA_SIZE:]
-        safe_start_thread(AsyncFetchPlot(DATA_SIZE, delay=self.fetch_plot_delay))
+        DATA_SIZE = CONF.models.get(symbol).get_max_datasize()
+        MAIN_DF = data.Constructor(None, client=CLIENT, data_s=ceil(DATA_SIZE / 200), force_new=True).get_data()[-DATA_SIZE:]
+        safe_start_thread(AsyncFetchPlot(delay=self.fetch_plot_delay))
         if int(CONF.trade_amount) > 0 and IS_TRADING:
             safe_start_thread(AsyncPlaceTrade(symbol))  # place trade thread
-            """
-                        if TRADING_COUNT % int(CONF.models.get(symbol).data_period) == 0:
-                t_data = data.Constructor(CONF.key, CONF.secret, data_s=ceil(DATA_SIZE / 200), data_p=CONF.models.get(symbol).data_period,
-                                          force_new=True, verbose=self.verbose).get_data()[-DATA_SIZE:]
-                safe_start_thread(AsyncPlaceTrade(t_data, symbol))  # place trade thread
-            TRADING_COUNT += 1
-            """
-
         print_finish_thread(self.tag, self.st)
 
 
 class AsyncFetchPlot(threading.Thread):
     """
-    AsyncFetchPlot(gui, size, sel_sym, current_data, delay=0.0, tag='fetch_plot')
-
-    Thread to create and display graphs for selected crypto price and past balance.
-
-    Prints duration thread run & type of graph created via: print_finish_thread()
-
-    Required Arguments:
-        gui (bybit_gui.Toplevel1):  GUI interface.
-        size (int): size or period of time in seconds of data to display.
-        sel_sym(int):  position of symbol from SYMBOLS to be displayed.
-        current_data(pandas.Dataframe): Crypto data pulled from ByBit.
-
-    Optional Keyword Arguments:
-        delay(float) = 0.0:  Delay before continues graphing data
-        tag(str) = 'fetch_plot':   Unique tag to keep track of this thread in pool.
+    Thread
+    Constructs price and balance graphs for gui
+    can be delayed for x seconds by setting 'delay' variable
     """
     tag = 'fetch_plot'
 
-    def __init__(self, size: int, delay=0.0):
+    def __init__(self, delay=0.0):
+        """init fetch plots thread"""
         super().__init__()
         global DATA_SIZE, CONF
         sns.set_theme()
-        sns.set(rc={'figure.facecolor': "#E6E6E6"})  # good color: E6E6E6 | norm panel color: d9d9d9 | purp: E100E1
-        pd.options.mode.chained_assignment = None
+        sns.set(rc={'figure.facecolor': "#E6E6E6"})
         self.delay = delay
         self.current_data = MAIN_DF
         self.sel_sym = Symbols.all[TRADING_CRYPTO.get()]
@@ -614,6 +550,10 @@ class AsyncFetchPlot(threading.Thread):
         self.st = 0
 
     def run(self):
+        """
+        Run fetch balance thread and populate price and/or balance graph
+        Print tag, thread duration, and passed arguments
+        """
         global w
         time.sleep(self.delay)
         self.st = time.time()
@@ -637,11 +577,12 @@ class AsyncFetchPlot(threading.Thread):
             plot_size['rely'] = (plot_size['rely'] * 2.12)
             args.append(self.balance_plot(plot_size, dpi))
         [child.destroy() for child in to_rm]
-        if len(args) == 0:
-            args = None
+        # if len(args) == 0:
+        #    args = None
         print_finish_thread(self.tag, self.st, args=args)
 
     def price_plot(self, plot_size, dpi):
+        """populate price graph"""
         try:
             data = self.current_data[[f'{self.sel_sym}_close']]
         except KeyError:
@@ -658,7 +599,6 @@ class AsyncFetchPlot(threading.Thread):
                     data[f'MA{key}'] = data['Price'].rolling(key, win_type='triang').mean()
                 elif h_key is not None:
                     data[f'EMA{h_key}'] = data[f'MA{h_key}'].ewm(span=4).mean()
-
         data = data[-self.size:]
         data = pd.melt(data, 'Time')
         figure = plt.Figure(dpi=dpi)
@@ -680,6 +620,7 @@ class AsyncFetchPlot(threading.Thread):
         return 'PRICE'
 
     def balance_plot(self, plot_size, dpi):
+        """populate balance graph"""
         global BALANCE_DF, BAL_PERIOD
         while AsyncFetchBalance.tag in [tag.tag for tag in THREAD_POOL]:
             time.sleep(0.5)
@@ -694,11 +635,7 @@ class AsyncFetchPlot(threading.Thread):
         ax_2 = figure_2.subplots()
         ax_2.yaxis.set_major_formatter(FuncFormatter(lambda z, pos: conv_currency_str(z)))
         ax_2.xaxis.set_major_formatter(FuncFormatter(lambda z, pos: None))
-        ax_2.set(xlabel=f'$Time$', ylabel='Balance'
-                 # ,
-                 # ylim=(min(data['value'].values) - (min(data['value'].values * 0.01)),
-                 #      max(data['value'].values) + (max(data['value'].values) * 0.01))
-                 )
+        ax_2.set(xlabel=f'$Time$', ylabel='Balance')
         p = sns.lineplot(data=data, y='value', x='Time', hue='variable', ax=ax_2, legend=True)
         ax_2.legend(loc='upper left')
         p.set_title(f'Total Balance for last {BAL_PERIOD.get()}')
@@ -715,81 +652,62 @@ class AsyncFetchPlot(threading.Thread):
 
 class AsyncPlaceTrade(threading.Thread):
     """
-    AsyncFetchPrediction(gui, sel_sym, current_data, model, tag='prediction')
-
-    Thread to run model (or random value if testing) and place orders (or simulate orders if testing=True)
-    Process data as via: bybit_data_handler.preprocess_data()
-    Will sell previous held crypto if selection changes.
-    Updates number of correct predictions.
-
-    Prints duration thread run & status of trade ie. 'OK buy order | OK sell order | INSUFFICIENT FUNDS'
-            via: print_finish_thread()
-    Prints if real trade has been attempted.
-
-    Required Arguments:
-        gui(bybit_gui.Toplevel1):  GUI interface.
-        sel_sym(int):  position of symbol from SYMBOLS to be traded.
-        current_data(pandas.Dataframe): current unprocessed data from bybit
-        model(dist):  dict holding model (keras.model) as well as data manipulation arguments.
-
-    Optional Keyword Arguments:
-        tag(str) = 'prediction':   Unique tag to keep track of this thread in pool.
+    Thread
+    check's loss safety before canceling previous trades if crypto changed.
+    as well as updates gui model accuracy.
     """
     tag = 'trade'
 
     def __init__(self, symbol: str):
+        """init place trade thread"""
         super().__init__()
         self.symbol = symbol
         self.current_data = pd.DataFrame()
         self.st = 0
 
     def run(self):
-        global CONF, PREDICTION, POSITION, LEVERAGE, TRADING_COUNT
-        time.sleep(5)
+        """
+        Run Place trade thread. sleep 10 sec to allow bybit to have proper data.
+        Updates prediction accuracy and position object.
+        Prints a warning if no model is found and switches to testing.
+        Stops trading if balance is insufficient
+        """
+        global CONF, PREDICTION, POSITION, LEVERAGE, TRADING_COUNT, CLIENT
+        time.sleep(10)
         self.st = time.time()
         if TRADING_COUNT % int(CONF.models.get(self.symbol).data_period) != 0:
             TRADING_COUNT += 1
             print_finish_thread(self.tag, self.st,
                                 [
-                                    f'{int(CONF.models.get(self.symbol).data_period) - TRADING_COUNT % int(CONF.models.get(self.symbol).data_period)}'
+                                    f'{int(CONF.models.get(self.symbol).data_period) - TRADING_COUNT % int(CONF.models.get(self.symbol).data_period)} '
                                     f' more count till next trade'])
             return
         else:
             from bin import data
-            self.current_data = data.Constructor(None,CONF.key, CONF.secret, data_s=ceil((DATA_SIZE + int(DATA_SIZE * 0.1)) / 200),
-                                                 data_p=CONF.models.get(self.symbol).data_period,
-                                                 force_new=True, save_file=False).get_data()[-DATA_SIZE:]
+            self.current_data = data.Constructor(None, client=CLIENT, data_s=ceil((DATA_SIZE + int(DATA_SIZE * 0.1)) / 200), save_file=True,
+                                                 data_p=CONF.models.get(self.symbol).data_period, force_new=True).get_data()[-DATA_SIZE:]
             TRADING_COUNT += 1
-
         CONF.leverage = int(LEVERAGE.get())
         POSITION.update(symbol=self.symbol, qty=int(w.entry_trade_amount.get()), position=PREDICTION)
-        status = 'OK'
+        status, order = 'OK', 'none'
         self.check_past_prediction()
-        order = 'none'
-        loss = int(w.entry_loss.get())
-        loss_period = int(w.entry_loss_period.get())
+        loss, loss_period = int(w.entry_loss.get()), int(w.entry_loss_period.get())
         if self.check_balance_trend(loss, loss_period):
             if CONF.models.get(POSITION.symbol).model is None:
                 testing_toggle(True)
                 print(Bcolors.WARNING + 'WARNING: No Model Found.' + Bcolors.ENDC + ' Testing with random predictions.')
-                PREDICTION = random.choice(['buy', 'sell'])  # ['buy','sell']
-                print(Bcolors.WARNING + f'Random Choice: ' + Bcolors.UNDERLINE + f'"{PREDICTION}"')
+                PREDICTION = random.choice(['buy', 'sell'])
             else:
                 PREDICTION = CONF.models.get(POSITION.symbol).prediction(self.current_data, POSITION.symbol)
             # sell past order if last traded symbol is different from currently trading.
             if POSITION.past_symbol != POSITION.symbol:
                 # trading new crypto. nullify last trade
-                side = 'NONE'
                 if POSITION.p == 'buy':
                     # if position for previous crypto was BUY, then SELL it
-                    side = 'sell'
-                    order = POSITION.place_trade(side=side, symbol=POSITION.past_symbol, amount=POSITION.past_qty)
+                    order = POSITION.place_trade(side='sell', symbol=POSITION.past_symbol, amount=POSITION.past_qty)
                 elif POSITION.p == 'sell':
                     # if position for previous crypto was SELL, then BUY it
-                    side = 'buy'
-                    order = POSITION.place_trade(side=side, symbol=POSITION.past_symbol, amount=POSITION.past_qty)
-                print(Bcolors.ENDC + f'ORDER: {side}\tChanged Crypto from: {POSITION.past_symbol} to {POSITION.symbol}. ID: {order}')
-
+                    order = POSITION.place_trade(side='buy', symbol=POSITION.past_symbol, amount=POSITION.past_qty)
                 # place trade in the direction of the prediction. as well as sell/buy all previous orders.
             try:
                 if PREDICTION == 'buy' and POSITION.p != 'buy':
@@ -813,6 +731,7 @@ class AsyncPlaceTrade(threading.Thread):
         print_finish_thread(self.tag, self.st, [status, 'ID: ' + order])
 
     def check_past_prediction(self):
+        """Checks past prediction for model accuracy"""
         global PREDICTION
         current_price = self.current_data[f'{POSITION.past_symbol}_close'].values[-1]
         previous_price = self.current_data[f'{POSITION.past_symbol}_close'].values[-2]
@@ -823,23 +742,19 @@ class AsyncPlaceTrade(threading.Thread):
 
     @staticmethod
     def check_balance_trend(loss, loss_period):
+        """Check balance trend for automatic stop"""
         b_df = BALANCE_DF.copy()
         if loss_period == 0 or b_df['Balance'].values[-loss_period] == 0:
             return True
-
-        v1 = b_df['Balance'].values[-1]
-        v2 = b_df['Balance'].values[-loss_period]
-        LOSS_V_TEMP = v1 - v2
-
-        if LOSS_V_TEMP > -abs(loss):
+        if (b_df['Balance'].values[-1] - b_df['Balance'].values[-loss_period]) > -abs(loss):
             return True
         return False
 
     @staticmethod
     def end_trading(error_bar: list):
+        """Close all open trade positions and end trading"""
         global IS_TRADING
         IS_TRADING = False
-        # close off last placed trade and end trading with reason display.
         order = POSITION.cancel_trades()
         w.text_prediction['text'] = '-'
         trigger_error_bar(error_bar, 5)
@@ -848,24 +763,13 @@ class AsyncPlaceTrade(threading.Thread):
 
 class AsyncTestModel(threading.Thread):
     """
-    AsyncTestModel(model_path, symbol, current_data, tag='test_model')
-
-    Thread to load the model via 'model_path', test provided model on current data for errors,
-        and assign provided model to model dist.
-
-    Prints duration thread run & status of model ie. (PASSED | FAILED)
-
-    Required Arguments:
-        model_path(str):    path to model on disk.
-        symbol(str):    Crypto symbol to assign the model if passes.
-        current_data(pandas.DataFrame): Dataframe of current operating data.
-
-    Optional Keyword Arguments:
-        tag(str) = 'fetch_plot':   Unique tag to keep track of this thread in pool.
+    Thread
+    gets data and evaluates passes model to verify its functional
     """
     tag = 'test_model'
 
     def __init__(self, data: pd.DataFrame, testing_model: Model, target: str, verbose: int = 0):
+        """init test model Thread"""
         super().__init__()
         self.data = data
         self.verbose = verbose
@@ -875,15 +779,25 @@ class AsyncTestModel(threading.Thread):
         self.st = 0
 
     def run(self):
+        """
+        Run test model thread. Takes passed model and runs keras evaluate function on it with model data arguments
+        to check for any errors.
+        Prints tag, thread duration, and passed arguments
+        """
         self.st = time.time()
         self._return = self.test_model()
         print_finish_thread(self.tag, self.st, ['eval:', round(self._return, 6)])
 
     def join(self, *args):
+        """Override join function"""
         threading.Thread.join(self, *args)
         return self._return
 
     def test_model(self):
+        """
+        Run test model thread. Takes passed model and runs keras evaluate function on it with model data arguments
+        to check for any errors.
+        """
         from bin.networkTraining import Training
         global CONF
         test_x, test_y = Training(CONF.key, CONF.secret).build_data(self.data, self.target, self.model.seq, self.model.future_p,
@@ -894,24 +808,13 @@ class AsyncTestModel(threading.Thread):
 
 class AsyncTrainModel(threading.Thread):
     """
-    AsyncTrainModel(model_path, symbol, current_data, tag='train_model')
-
-    Thread to load the model via 'model_path', test provided model on current data for errors,
-        and assign provided model to model dist.
-
-    Prints duration thread run & status of model ie. (PASSED | FAILED)
-
-    Required Arguments:
-        model_path(str):    path to model on disk.
-        symbol(str):    Crypto symbol to assign the model if passes.
-        current_data(pandas.DataFrame): Dataframe of current operating data.
-
-    Optional Keyword Arguments:
-        tag(str) = 'fetch_plot':   Unique tag to keep track of this thread in pool.
-        """
+    Thread
+    Trains model via networkTraining.py the  compares ot to existing model if it is better and should be replaced
+    """
     tag = 'train_model'
 
     def __init__(self, data_args: dict, model_args: dict, verbose: int, force_new: bool):
+        """init training model thread"""
         super().__init__()
         self.data_args = data_args
         self.model_args = model_args
@@ -921,6 +824,11 @@ class AsyncTrainModel(threading.Thread):
         self._kill = False
 
     def run(self):
+        """
+        Run train model thread. Downloads data from bybit, then parses data, then fits model to data.
+        After fitting the new model is compared to the previous model if exists.
+        Prints tag, thread duration, and passed arguments.
+        """
         self.st = time.time()
         from bin.networkTraining import Training
         global CONF
@@ -956,9 +864,11 @@ class AsyncTrainModel(threading.Thread):
         print_finish_thread(self.tag, self.st, [Bcolors.OKCYAN + status + Bcolors.ENDC])
 
     def kill(self):
+        """Set kill attribute to True to kill thread"""
         self._kill = True
 
     def check_kill(self):
+        """Checks kill attribute and ends thread if true"""
         if self._kill:
             w.btn_start_train['text'] = 'Start Training'
             w.prog_bar_train['value'] = 0
@@ -970,22 +880,24 @@ class AsyncTrainModel(threading.Thread):
 
 class AsyncBuildBalanceDf(threading.Thread):
     """
-    AsyncBuildBalance(tag='build_balance')
-
-    Thread for the initial building of the balance dataframe.
-
-    prints duration thread run & status of trade ie. 'OK | File Not Found' via: print_finish_thread()
-
-    Optional Keyword Arguments:
-        tag(str) = 'build_balance':   Unique tag to keep track of this thread in pool.
+    Thread
+    builds balance df if df doesn't exist.
     """
     tag = 'build_balance'
 
     def __init__(self):
+        """init build balance thread"""
         super().__init__()
         self.st = 0
 
     def run(self):
+        """
+        Run build balance thread. Loads csv or balance, if file can't be loaded generate 1 year worth
+        of balance the value being 0.
+        After the csv is loaded the difference between time of loading and when last saved is filled with
+        the last recorded value.
+        Prints tag, thread duration, and passed arguments.
+        """
         global BALANCE_DF, CONF
         self.st = time.time()
         current_time_m = (time.time() - (time.time() % 60))
@@ -1016,25 +928,16 @@ class AsyncBuildBalanceDf(threading.Thread):
         if status != 'OK':
             CONF.total_profit = 0
             CONF.last_cap_bal = 0
-
         print_finish_thread(self.tag, self.st, [status])
 
 
 def print_finish_thread(tag: str, start_time: float, args: list = None):
     """
-    print_finish_thread(tag, start_time, args = None)
-
-    Print when thread finishes along with arguments and duration.
-
-    Required Arguments:
-        tag(str):   Tag from threat or preferred string.
-        start_time(float):  Float of unix time started to calculate total time of thread.
-
-    Optional Keyword Arguments:
-        args(list) = None: A list of strings to be added to output.
+    Print that the thread finished and how long it was running along with any additional
+    arguments that were passed.
     """
     to_app = ''
-    if args is not None:
+    if args is not None and len(args) > 0:
         for arg in args:
             to_app += str(arg) + '\t'
     print(Bcolors.ENDC + f'{time.ctime()}\t' + Bcolors.OKGREEN +
@@ -1066,13 +969,8 @@ def set_tk_var():
 
 
 def init(top, gui, *args, **kwargs):
-    """
-    Call load_config().
-    Initialize vars (CLIENT, IND_IMAGE).
-    Call root loops (refresh(), trading_loop()).
-    Update GUI values with config values
-    """
-    global w, top_level, root, CLIENT, BALANCE_DF, TRADE_LOG_DF, CONF, DATA_SIZE, EXCHANGE
+    """init bybit_run with default variables and gui loops."""
+    global w, top_level, root, CLIENT, BALANCE_DF, CONF, DATA_SIZE, EXCHANGE
     global POSITION, INDICATOR_LIGHT_COLORS, PREDICTION, TESTING_PROFIT
     w = gui
     CONF = Config(filepath=CONFIG_FILE_PATH)
@@ -1086,10 +984,6 @@ def init(top, gui, *args, **kwargs):
     TESTING_PROFIT = 0
     BALANCE_DF = pd.DataFrame()
     safe_start_thread(AsyncBuildBalanceDf())
-    if os.path.isfile(TRADE_LOG_PATH):
-        TRADE_LOG_DF = pd.read_csv(TRADE_LOG_PATH)
-    else:
-        TRADE_LOG_DF = pd.DataFrame()
     top_level = top
     root = top
     set_gui_fields()
@@ -1099,6 +993,7 @@ def init(top, gui, *args, **kwargs):
 
 
 def set_gui_fields():
+    """Populate gui objects with values from config file"""
     global CONF
     w.text_prediction['text'] = '-'
     w.rb_cont_arr[Symbols.all.index(POSITION.symbol)].invoke()
@@ -1109,18 +1004,15 @@ def set_gui_fields():
     w.entry_loss_period.delete(0, 'end')
     w.entry_loss_period.insert(0, CONF.loss_period)
     testing_toggle(toggle_to=CONF.testing)
-
     if CONF.plot_display in PlotTypes.all:
         w.combo_box_plot_type.set(CONF.plot_display)
     else:
         w.combo_box_plot_type.set(PlotTypes.price)
-
     if CONF.balance_plot_period in list(BALANCE_PERIODS_DICT.keys()):
         w.combo_box_bal_period.set(CONF.balance_plot_period)
     else:
         w.combo_box_bal_period.set(list(BALANCE_PERIODS_DICT.keys())[0])
     [w.ma_btns[k].select() for k, v in enumerate(list(CONF.plot_moving_avg)) if v == 1]
-
     model_args = CONF.default_model_arguments
     w.combo_box_target.current(Symbols.all.index(model_args.get('target')))
     w.entry_future_p.delete(0, 'end')
@@ -1140,7 +1032,6 @@ def set_gui_fields():
     w.entry_ema.insert(0, str(model_args.get('ema'))[1:-1].replace(' ', ''))
     w.slider_leverage.set(CONF.leverage)
     LocalBybit.set_leverage(Symbols.all.index(model_args.get('target')), leverage=LEVERAGE.get())
-
     for layer in CONF.model_blueprint:
         model_struct_row(layer)
     update_model_gui_names()
@@ -1155,7 +1046,10 @@ def destroy_window():
 
 
 def window_close():
-    """Save file(s) and ends threads. Then calls destroy_window()"""
+    """
+    Saves config balance_df to disk.
+    End threads then calls destroy_window()
+    """
     global IS_QUITTING, BALANCE_DF_PATH, w
     IS_QUITTING = True
     CONF.write_config()
@@ -1163,25 +1057,17 @@ def window_close():
     for th in THREAD_POOL:
         if th.tag == AsyncTrainModel.tag:
             th.kill()
-    try:
-        w.canvas_open_close.destroy()
-    except AttributeError:
-        pass
+    # try:
+    #    w.canvas_open_close.destroy()
+    # except AttributeError:
+    #    pass
     for t in THREAD_POOL:
         t.join()
     destroy_window()
 
 
 def conv_currency_str(value: float):
-    """
-    Format currency to proper decimal values depending on value
-
-    Required Arguments:
-        value(float):   Value to convert to currency string.
-
-    :returns
-        (str)   Converted to currency ie. $123.45
-    """
+    """Formats precision of currency to set decimal place"""
     if value is None:
         return '0'
     elif value < 9.9999:
@@ -1196,13 +1082,8 @@ def conv_currency_str(value: float):
 
 def obfuscate_api_info(val: str):
     """
-    Hides API value passed only showing last 8 characters
-
-    Required Arguments:
-        val(str):   Value to be obfuscated.
-
-    :returns
-        (str)   Obfuscated value.
+    Hides api passed and returns only last 8 characters for gui or 'ERROR'
+    if passed value is less than 8 characters.
     """
     global w
     if val is None or len(val) < 8:
@@ -1213,12 +1094,8 @@ def obfuscate_api_info(val: str):
 
 def safe_start_thread(t: callable):
     """
-    Safely start a thread.
-    Check is thread in running by checking if passed thread tag is in thread pool.
-    Prints if thread started.
-
-    Required Arguments:
-        t(callable):    The thread callable to be checked and started.
+    Check is thread in running by checking if thread tag is in thread pool.
+    Prints if thread has or hasn't started.
     """
     global THREAD_POOL
     out = ''
@@ -1232,10 +1109,6 @@ def safe_start_thread(t: callable):
         except RuntimeError:
             pass
     else:
-        if t.tag == AsyncPlaceTrade.tag:
-            print(Bcolors.FAIL + '\n******************************' + Bcolors.ENDC)
-            print([tag.tag for tag in THREAD_POOL])
-            print(Bcolors.FAIL + '******************************\n' + Bcolors.ENDC)
         out = Bcolors.ENDC + f'Thread: "{t.tag}"' + Bcolors.WARNING + ' NOT Started.'
     print(out)
 
@@ -1243,17 +1116,15 @@ def safe_start_thread(t: callable):
 def api_change():
     """
     To be called after changing the api key or secret.
-    Updates values for GUI as well as CLIENT and fetches new balance.
+    Update values for GUI as well as CLIENT and fetches new balance.
     """
     global MAIN_DF, CLIENT, EXCHANGE, w
     w.text_api_key['text'] = obfuscate_api_info(CONF.key)
     w.text_api_secret['text'] = obfuscate_api_info(CONF.secret)
-    if obfuscate_api_info(CONF.key) == 'ERROR' or obfuscate_api_info(
-            CONF.secret) == 'ERROR':
+    if obfuscate_api_info(CONF.key) == 'ERROR' or obfuscate_api_info(CONF.secret) == 'ERROR':
         trigger_error_bar(lines=['ERROR:  API Key/Secret', 'Try Updating API Key or Secret'], duration=10)
         return
     safe_start_thread(AsyncFetchBalance(key=CONF.key, secret=CONF.secret))
-
     CLIENT = LocalBybit.set_client(key=CONF.key, secret=CONF.secret)
     EXCHANGE = Exchange.set_client(key=CONF.key, secret=CONF.secret)
     safe_start_thread(AsyncDataHandler(fetch_plot_delay=1))
@@ -1262,7 +1133,6 @@ def api_change():
 def minute_loop():
     """Main loop to call AsyncFetchBalance() thread and AsyncDataHandler() thread."""
     global TRADING_COUNT, CONF
-    x = 11
     if REFRESH_COUNT > 5:
         safe_start_thread(AsyncFetchBalance(key=CONF.key, secret=CONF.secret))
         safe_start_thread(AsyncDataHandler(fetch_plot_delay=0.5))
@@ -1275,8 +1145,6 @@ def minute_loop():
 def refresh():
     """Main loop to refresh GUI elements and values."""
     global THREAD_POOL, TRADING_CRYPTO, REFRESH_COUNT, w, TRADING_COUNT, TESTING_PROFIT
-    # refresh GUI every 1 seconds with updated values
-    # print(f'\t{REFRESH_COUNT}\t{[tag.tag for tag in THREAD_POOL]}')
     w.time_to_next_up['text'] = f'Update in: {int(60 - (time.time() % 60))}sec'
     if 'Loading' in w.btn_start_stop['text']:
         l_c = w.btn_start_stop['text'][w.btn_start_stop['text'].find('.'):]
@@ -1297,13 +1165,6 @@ def refresh():
     w.text_total_profit['text'] = conv_currency_str(CONF.total_profit)
     if CONF.testing:
         w.text_testing_profit['text'] = conv_currency_str(TESTING_PROFIT)
-    # w.text_last_trade_profit['text'] = conv_currency_str(POSITION.last_trade_profit)
-    # if int(w.text_last_trade_profit['text']) > 0:  # green text color
-    #    w.text_last_trade_profit['foreground'] = '#25b100'
-    # elif int(w.text_last_trade_profit['text']) < 0:  # red text color
-    #    w.text_last_trade_profit['foreground'] = '#b10000'
-    # else:  # black text color
-    #    w.text_last_trade_profit['foreground'] = '#000000'
     if TRADING_COUNT >= 1 and IS_TRADING:
         if REFRESH_COUNT % 2 == 0:
             w.label_act_dact['text'] = 'Active'
@@ -1317,9 +1178,7 @@ def refresh():
     else:
         w.label_act_dact['text'] = 'Inactive'
         w.img_indicator_light.itemconfig(w.ind_img_container, image=INDICATOR_LIGHT_COLORS.get('red'))
-
     w.label_fees['text'] = f'Maker Fee: {POSITION.maker_fee}%    |    Taker Fee: {POSITION.taker_fee}%'
-
     if len(THREAD_POOL) > 0:
         THREAD_POOL = [t for t in THREAD_POOL if t.is_alive()]
     REFRESH_COUNT += 1
@@ -1328,17 +1187,7 @@ def refresh():
 
 
 def trigger_error_bar(lines: list, duration: int, close=False):
-    """
-    When called triggers an error bar with contents of lines.
-
-    Required Arguments:
-        lines(list[str]):   What text to display with error.
-        duration(float):    How long the error will display for in seconds.
-
-    Optional Keyword Arguments:
-        close=False:    To end error loop after displaying error (function use only.)
-
-    """
+    """When called triggers an error bar with contents of lines var"""
     global w
     if close:
         w.text_error_bar['text'] = ''
@@ -1353,7 +1202,7 @@ def trigger_error_bar(lines: list, duration: int, close=False):
 
 
 def reset_stats():
-    """Reset stats to '0' and trade settings to default."""
+    """Reset stats to and trade settings to default."""
     global w, TESTING_PROFIT, BALANCE_DF
     TESTING_PROFIT = 0
     BALANCE_DF['Test Balance'] = BALANCE_DF['Balance']
@@ -1374,10 +1223,11 @@ def reset_stats():
 
 
 def change_trading_crypto():
+    """Called when current trading crypto is changed to update price graph"""
     global TRADING_COUNT
     TRADING_COUNT = 0
     if (60 - (time.time() % 60)) > 10:
-        safe_start_thread(AsyncFetchPlot(DATA_SIZE, delay=4))
+        safe_start_thread(AsyncFetchPlot(delay=4))
 
 
 def save_settings():
@@ -1387,7 +1237,6 @@ def save_settings():
     current_key = CONF.key
     t_api_secret = w.entry_api_secret.get().strip()
     current_secret = CONF.secret
-
     if not t_api_key or not t_api_secret or current_key == t_api_key or current_secret == t_api_secret:
         pass
     else:
@@ -1410,13 +1259,10 @@ def testing_toggle(toggle_to: bool = None):
     else:
         CONF.testing = not bool(CONF.testing)
     if CONF.testing:
-
-        # = CONF.total_profit
         w.btn_testing_on_off['text'] = 'Turn Off'
         w.label_testing_profit['text'] = 'Testing Profit:'
         w.text_testing_profit['text'] = conv_currency_str(TESTING_PROFIT)
     else:
-        exit(22)
         TESTING_PROFIT = 0
         reset_testing_balance()
         w.btn_testing_on_off['text'] = 'Turn On'
@@ -1425,28 +1271,16 @@ def testing_toggle(toggle_to: bool = None):
 
 
 def place_moving_avg_btns(interface, var_set: dict, m_offset=0):
-    """
-    Called from GUI creation.
-    Makes moving average buttons for graphs and removes previous buttons.
-
-    Required Arguments:
-        gui(bybit_gui.Toplevel1):   GUI Interface
-        var_set(dict):  Dictionary of moving avr buttons.
-
-    Optional Keyword Arguments:
-        m_offset=0: Main offset if button set is placed next to another.
-    """
+    """Place moving avg buttons on the gui"""
     offset = 85 + m_offset
     if m_offset == 0 and len(interface.ma_btns) > 0:
         [btn.place_forget() for btn in interface.ma_btns]
         interface.ma_btns = []
     if m_offset != 0:
         interface.label_break_line.place(x=offset - 26, rely=0.25, height=20, width=16)
-        interface.label_break_line.configure(activebackground="#f9f9f9", activeforeground="black", anchor='c',
-                                             background="#d9d9d9",
-                                             justify='center', disabledforeground="#a3a3a3",
-                                             font="-family {Segoe UI} -size 16", foreground="#000000",
-                                             highlightbackground="#d9d9d9", highlightcolor="black", text=' | ')
+        interface.label_break_line.configure(activebackground="#f9f9f9", activeforeground="black", anchor='c', background="#d9d9d9",
+                                             justify='center', disabledforeground="#a3a3a3", font="-family {Segoe UI} -size 16",
+                                             foreground="#000000", highlightbackground="#d9d9d9", highlightcolor="black", text=' | ')
     else:
         try:
             interface.label_break_line.place_forget()
@@ -1470,55 +1304,41 @@ def place_moving_avg_btns(interface, var_set: dict, m_offset=0):
 def moving_avg_check_btn():
     """
     Checks if moving ave buttons pressed and calls AsyncFetchPlot() as long as time
-    is greater than 15sec from refreshing.
-
-    Required Arguments:
-        event:  On click event.
+    is greater than 10 sec from refreshing.
     """
     CONF.plot_moving_avg = [x.get() for x in MOVING_AVG_DICT.values()]
     CONF.balance_moving_avg = [x.get() for x in MOVING_AVG_DICT.values()]
     if (60 - (time.time() % 60)) > 10:
-        safe_start_thread(AsyncFetchPlot(DATA_SIZE, delay=4))
+        safe_start_thread(AsyncFetchPlot(delay=4))
 
 
 def plot_combo_box(event):
     """
     Checks if combo box for plot type is changed and calls AsyncFetchPlot() as long as time
-    is greater than 15sec from refreshing.
-
-    Required Arguments:
-        event:  On click event.
+    is greater than 10 sec from refreshing.
     """
     CONF.plot_display = PLOT_TYPE.get()
     if (60 - (time.time() % 60)) > 10:
-        safe_start_thread(AsyncFetchPlot(DATA_SIZE, delay=4))
+        safe_start_thread(AsyncFetchPlot(delay=4))
     w.info_frame.focus()
 
 
 def bal_period_combo_box(event):
     """
     Checks if combo box for balance period is changed and calls AsyncFetchPlot() as long as time
-    is greater than 15sec from refreshing.
+    is greater than 10 sec from refreshing.
 
-    Required Arguments:
-        event:  On click event.
     """
     CONF.balance_plot_period = BAL_PERIOD.get()
     if (60 - (time.time() % 60)) > 10:
-        safe_start_thread(AsyncFetchPlot(DATA_SIZE, delay=4))
+        safe_start_thread(AsyncFetchPlot(delay=4))
     w.info_frame.focus()
 
 
 def gen_model_btn(symbol: str):
     """
-    Opens OS file selector to locate model of type (hdf5, h5)
-    and calls: AsyncTestModel() to make sure model is functional.
-    No baring on accuracy of the model.
-
-    Prints 'canceled' to console if no file is selected.
-
-    Required Arguments:
-        sym(str):   String of crypto symbol in witch the model is for.
+    Moves to model training page and populates fields with models values if not none
+    to be retrained on or adjusted.
     """
     global w, CONF
     model = CONF.models.get(symbol)
@@ -1545,17 +1365,9 @@ def gen_model_btn(symbol: str):
 
 def get_model_info(symbol: str, display_gui=True):
     """
-    Get neural network model info by calling summary on the model.
-    If model passed is None, return.
-
-    Required Arguments:
-        symbol(str):    Symbol of crypto model to summarize.
-
-    Optional Keyword Arguments:
-        return_str(bool) = True:    If True will return a string containing parsed m.summary().
-                                        Else open a dialog window displaying m.summary().
-    :returns
-        (str): If return_str is set to True else (None)
+    returns a summary of the model.
+    If 'display_gui=True' open a new window with model summary such as layers and
+    types and number of nodes. has an option to display.
     """
     from gui import popup_bonus
     global CONF
@@ -1593,18 +1405,13 @@ def get_model_info(symbol: str, display_gui=True):
     popup_bonus(**out_args)
 
 
-def delete_model(symbol: str):
-    CONF.models[symbol].clear()
-    update_model_gui_names()
-
-
 def update_model_gui_names():
+    """Updated model location in gui"""
     global w, CONF
     for count, model in enumerate(CONF.models.values()):
+        loc = '...'
         if model.location is not None:
             loc = model.location.split('\\')[-1]
-        else:
-            loc = '...'
         w.text_model_name_arr[count]['text'] = loc
     CONF.write_config()
 
@@ -1631,26 +1438,24 @@ def start_btn():
 
 
 def model_struct_row(layer=None):
+    """Populates rows in model training field on gui"""
     import gui
     if layer is not None:
         y_pos = 32 + (5 * len(w.model_layer_lst) - 1) + (20 * len(w.model_layer_lst) - 1)
         if len(w.model_layer_lst) >= 8:
             return
-
     else:
         if len(w.model_layer_lst) > 0:
             rm = w.model_layer_lst.pop()
             for child in rm:
                 child.destroy()
             return
-
     combo_box = ttk.Combobox(w.FrameTraining2)
     combo_box.place(x=5, y=y_pos, height=19, width=70)
     combo_box.configure(background="#d9d9d9", font="-family {Segoe UI} -size 9")
     combo_box['values'] = list(LayerOptions.layer_dict)
     combo_box.current(list(LayerOptions.layer_dict).index(layer['layer']))
     combo_box['state'] = 'readonly'
-
     n_label = gui.struct_label(w.FrameTraining2, 'Neurons:', x=77, y=y_pos - 1, height=19, width=51, size=9)
     n_entry = gui.struct_entry(w.FrameTraining2, x=129, y=y_pos, height=19, width=32, size=10)
     n_entry.insert(0, layer['n'])
@@ -1661,6 +1466,10 @@ def model_struct_row(layer=None):
 
 
 def train_model():
+    """
+    Takes values entered on training page and places them into a dictionary.
+    Then saves the model layout to config and begins training via AsyncTrainModel thread
+    """
     if 'stop' in w.btn_start_train['text'].lower():
         time.sleep(0.5)
         for th in THREAD_POOL:
@@ -1689,14 +1498,11 @@ def train_model():
         except ValueError:
             print(Bcolors.FAIL + f'ERROR: ValueError: Model training field: #{count} value: {entry.get()} type: {type(entry.get())}')
             return
-
     for k in args_key[1:-2]:
         if data_args[k] <= 0:
             print(Bcolors.WARNING + f'WARNING: Argument: "{k}" value: {data_args[k]} is invalid. Value must be greater than 0.')
             return
-
     CONF.default_model_arguments = data_args
-
     model_args = []
     for layer in w.model_layer_lst:
         try:
@@ -1725,11 +1531,9 @@ def train_model():
         except ValueError:
             print(Bcolors.FAIL + f'ERROR: ValueError: value: {ll.get()} model layer: {str(layer)}')
             return
-
     if len(model_args) <= 0:
         print(Bcolors.WARNING + f'WARNING: Model Layout Invalid. Size: {len(model_args)} must be greater than 0.')
         return
-
     CONF.model_blueprint = model_args
     CONF.write_config()
     verbose = 2 if ('selected' in w.checkbutton_verbose.state() or 'alternate' in w.checkbutton_verbose.state()) else 1
@@ -1739,28 +1543,19 @@ def train_model():
 
 
 def reset_testing_balance():
+    """Resets testing balance dataframe to balance dataframe."""
     global BALANCE_DF
-    print('SETTING TESTING BALANCE DF')
     BALANCE_DF['Test Balance'] = BALANCE_DF['Balance']
 
 
 # GLOBAL VARS
-
-# bool
 IS_TRADING = False  # if se tot trading mode or idle
 HARD_TESTING_LOCK = True  # software lock to prevent accidental trading while testing
 IS_QUITTING = False  # when set to true to start the shutdown process.
-
-# ints
-# size of data for model. Changed when switching models.
 TRADING_COUNT, REFRESH_COUNT, TICK = 0, 0, 0  # counts for gui ticks
-
-# strings
 CONFIG_FILE_PATH = 'bin/res/config.yaml'  # config file location
 BALANCE_DF_PATH = 'bin/res/b_df.csv'  # user balance dataframe
-TRADE_LOG_PATH = 'bin/res/trade_log.csv'
 VERSION = '1.0.0'  # version number
-
 TESTING_PROFIT = 0
 DATA_SIZE = Config.DATA_SIZE
 BALANCE_PERIODS_DICT = {'10 min': 10, '60 Min': 60, '1 Day': 1440, '10 Day': 14400, '1 Month': 43800, '3 Month': 131400,
@@ -1771,7 +1566,6 @@ THREAD_POOL = []  # pool of all active threads
 POSITION = Position()
 MAIN_DF = pd.DataFrame()  # dataframe holding the coin price data
 BALANCE_DF = pd.DataFrame()  # dataframe holding the user balance price data
-TRADE_LOG_DF = pd.DataFrame()
 no_buy, no_sell = 0, 0
 
 if __name__ == '__main__':

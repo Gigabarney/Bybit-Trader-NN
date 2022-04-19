@@ -71,7 +71,7 @@ class Training:
             self._call_update(update_val=1, reset=False)
 
         def _call_update(self, update_val, reset):
-            self.outer_instance.verbose_print(text=self.text.format(self.current_epoch, self.total_epochs, self.current_loss)+'\r',
+            self.outer_instance.verbose_print(text=self.text.format(self.current_epoch, self.total_epochs, self.current_loss) + '\r',
                                               max_val=self.total_batches, update=update_val, reset=reset)
 
     def __init__(self, key: str, secret: str, parent=None, gui=None, verbose=0, outcome_type=Regression):
@@ -86,7 +86,7 @@ class Training:
             drop_symbols: list,
             moving_avg: list, e_moving_avg: list, sequence_length: list, batch_size: list, epochs: int, early_stop_patience: int):
         self._training_on()
-        master_dataframe = data.Constructor(self, self.key, self.secret, data_s=data_size, data_p=data_period, threads=4,
+        master_dataframe = data.Constructor(self, key=self.key, secret=self.secret, data_s=data_size, data_p=data_period, threads=4,
                                             force_new=force_new_dataset).get_data()
         back_up_data = master_dataframe.iloc[:int(len(master_dataframe.index) / 1)]
         for target in targets:
@@ -140,7 +140,7 @@ class Training:
                                 keras.backend.clear_session()
                                 plot_data(plotting_data)
 
-    def train(self, data_args: dict, model_args: dict, force_new: bool):
+    def train(self, client, data_args: dict, model_args: dict, force_new: bool):
         """
         add TRIX tripple EMA
         add MACD (12-Period EMA − 26-Period EMA)
@@ -148,7 +148,7 @@ class Training:
         from keras.callbacks import LambdaCallback
         self._training_on()
 
-        master_dataFrame = data.Constructor(self, self.key, self.secret, data_s=data_args['size'], data_p=data_args['period'], threads=4,
+        master_dataFrame = data.Constructor(self, client=client, data_s=data_args['size'], data_p=data_args['period'], threads=4,
                                             force_new=force_new).get_data()
         raw_data = master_dataFrame.copy()
         tr_x, tr_y, v_x, v_y, te_x, te_y, features = self.build_data(master_dataFrame, target=data_args['target'], seq=data_args['seq'],
@@ -164,7 +164,7 @@ class Training:
                            f'\nFuture prediction period:\t{data_args["future"]}\nMoving Average(s):\t{data_args["ma"]}'
                            f'\nExponential Span:\t{data_args["ema"]}\n{"*" * 20}\n', max_val=-1)
         active_model.fit(tr_x, tr_y, batch_size=data_args['batch'], epochs=data_args['epochs'], validation_data=(v_x, v_y),
-                         use_multiprocessing=True, verbose=self.verbose-1,
+                         use_multiprocessing=True, verbose=self.verbose - 1,
                          callbacks=[early_stop_callback, self.UpdateProgressTraining(self, total_batches=len(tr_x) // data_args['batch'],
                                                                                      total_epochs=data_args['epochs'])])
         keras.backend.clear_session()

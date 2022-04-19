@@ -1,0 +1,95 @@
+user:
+  api_key: jfCGTjZcCIuPDUbdDt
+  api_secret: IHz2iqBanafGGuesd0w4QKjrQyUb2NDgQ0q1
+settings:
+  def_coin: XRP
+  leverage: 1
+  plot_display: Both
+  balance_plot_period: 10 min
+  PMA:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  BMA:
+  - 0
+  - 0
+  testing: true
+  trade_amount: 1
+  loss_amount: 5
+  loss_period: 10
+  btc_model:
+    location: bin\res\models\BTC_L72_L72_D1_B64_F1_P3_1649623255__S256-MA[]-EMAS[]-DSYM[].h5
+    seq: 256
+    batch: 64
+    future: 1
+    moving_avg: []
+    e_moving_avg: []
+    drop: []
+    period: 3
+    layers:
+    - layer: LSTM
+      n: 72
+      drop: 0.2
+    - layer: LSTM
+      n: 72
+      drop: 0.1
+  eth_model:
+    location: null
+    seq: null
+    batch: null
+    future: null
+    moving_avg: null
+    e_moving_avg: null
+    drop: null
+    period: null
+    layers: null
+  xrp_model:
+    location: bin\res\models\XRP_L64_L64_D1_B64_F1_P3_1649529935__S128-MA[]-EMAS[]-DSYM[].h5
+    seq: 128
+    batch: 64
+    future: 1
+    moving_avg: []
+    e_moving_avg: []
+    drop: []
+    period: 3
+    layers:
+    - layer: LSTM
+      n: 64
+      drop: 0.1
+    - layer: LSTM
+      n: 64
+      drop: 0.1
+  eos_model:
+    location: null
+    seq: null
+    batch: null
+    future: null
+    moving_avg: null
+    e_moving_avg: null
+    drop: null
+    period: null
+    layers: null
+  default_model_arguments:
+    target: XRP
+    future: 1
+    size: 500
+    period: 3
+    epochs: 20
+    seq: 128
+    batch: 64
+    ma: []
+    ema: []
+  model_blueprint:
+  - layer: LSTM
+    n: 64
+    drop: 0.1
+  - layer: LSTM
+    n: 64
+    drop: 0.1
+stats:
+  total_profit: -0.10649349749999981
+  last_cap_bal: 5.367932903
+  total_prediction: 41
+  correct_prediction: 11

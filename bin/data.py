@@ -10,10 +10,12 @@ from bybit import bybit
 class Constructor:
     symbols = ['BTC', 'ETH', 'XRP', "EOS"]
 
-    def __init__(self, outer_instance: networkTraining.Training, key: str, secret: str, data_s=1, data_p=1, threads=1,
-                 force_new: bool = False, save_file=True):
+    def __init__(self, outer_instance: networkTraining.Training, data_s=1, data_p=1, threads=1,
+                 client=None, key=None, secret=None, force_new: bool = False, save_file=True):
         self.outer_instance = outer_instance
-        self.client = bybit(test=False, api_key=key, api_secret=secret)
+        self.client = client
+        if self.client is None:
+            self.client = bybit(test=False, api_key=key, api_secret=secret)
         self.data_size = data_s
         if outer_instance is not None:
             self.verbose = outer_instance.verbose
