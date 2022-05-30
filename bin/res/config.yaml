@@ -1,8 +1,8 @@
 user:
-  api_key: jfCGTjZcCIuPDUbdDt
-  api_secret: IHz2iqBanafGGuesd0w4QKjrQyUb2NDgQ0q1
+  api_key: YNk1kPwmrbfAVlVp5R
+  api_secret: 80rRPUMf1JXMiGAiWciWFq7driQewBgKA0Ow
 settings:
-  def_coin: XRP
+  def_coin: BTC
   leverage: 1
   plot_display: Both
   balance_plot_period: 10 min
@@ -11,30 +11,27 @@ settings:
   - 0
   - 0
   - 0
-  - 0
+  - 1
   BMA:
   - 0
   - 0
+  - 0
+  - 0
+  - 1
   testing: true
   trade_amount: 1
   loss_amount: 5
   loss_period: 10
   btc_model:
-    location: bin\res\models\BTC_L72_L72_D1_B64_F1_P3_1649623255__S256-MA[]-EMAS[]-DSYM[].h5
-    seq: 256
-    batch: 64
-    future: 1
-    moving_avg: []
-    e_moving_avg: []
-    drop: []
-    period: 3
-    layers:
-    - layer: LSTM
-      n: 72
-      drop: 0.2
-    - layer: LSTM
-      n: 72
-      drop: 0.1
+    location: null
+    seq: null
+    batch: null
+    future: null
+    moving_avg: null
+    e_moving_avg: null
+    drop: null
+    period: null
+    layers: null
   eth_model:
     location: null
     seq: null
@@ -46,21 +43,15 @@ settings:
     period: null
     layers: null
   xrp_model:
-    location: bin\res\models\XRP_L64_L64_D1_B64_F1_P3_1649529935__S128-MA[]-EMAS[]-DSYM[].h5
-    seq: 128
-    batch: 64
-    future: 1
-    moving_avg: []
-    e_moving_avg: []
-    drop: []
-    period: 3
-    layers:
-    - layer: LSTM
-      n: 64
-      drop: 0.1
-    - layer: LSTM
-      n: 64
-      drop: 0.1
+    location: null
+    seq: null
+    batch: null
+    future: null
+    moving_avg: null
+    e_moving_avg: null
+    drop: null
+    period: null
+    layers: null
   eos_model:
     location: null
     seq: null
@@ -72,24 +63,26 @@ settings:
     period: null
     layers: null
   default_model_arguments:
-    target: XRP
+    target: ETH
     future: 1
-    size: 500
-    period: 3
+    size: 1000
+    period: 30
     epochs: 20
     seq: 128
     batch: 64
-    ma: []
-    ema: []
+    ma:
+    - 15
+    ema:
+    - 10
   model_blueprint:
   - layer: LSTM
-    n: 64
-    drop: 0.1
-  - layer: LSTM
-    n: 64
-    drop: 0.1
+    n: 25
+    drop: 0.2
+  - layer: Dense
+    n: 15
+    drop: 0.0
 stats:
-  total_profit: -0.10649349749999981
-  last_cap_bal: 5.367932903
-  total_prediction: 41
-  correct_prediction: 11
+  total_profit: -0.10981070199999987
+  last_cap_bal: 2.9278550095
+  total_prediction: 0
+  correct_prediction: 0
