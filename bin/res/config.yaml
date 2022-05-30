@@ -1,6 +1,6 @@
 user:
-  api_key: YNk1kPwmrbfAVlVp5R
-  api_secret: 80rRPUMf1JXMiGAiWciWFq7driQewBgKA0Ow
+  api_key: 
+  api_secret: 
 settings:
   def_coin: BTC
   leverage: 1
