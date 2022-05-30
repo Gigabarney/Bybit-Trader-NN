@@ -517,7 +517,7 @@ class AsyncDataHandler(threading.Thread):
         Run data handler. Set 'MAIN_DF' with new price data from bybit
         Print tag, thread duration, and passed arguments
         """
-        from bin import data_handler
+        from bin import dataHandler
         global MAIN_DF, CONF, DATA_SIZE, TRADING_COUNT, CLIENT
         self.st = time.time()
         symbol = Symbols.all[TRADING_CRYPTO.get()]
@@ -683,7 +683,7 @@ class AsyncPlaceTrade(threading.Thread):
                                  f' more count till trade'])
             return
         else:
-            from bin import data_handler
+            from bin import dataHandler
             self.current_data = data_handler.Constructor(None, client=CLIENT, data_s=ceil((DATA_SIZE + int(DATA_SIZE * 0.1)) / 200), save_file=False,
                                                          data_p=CONF.models.get(self.symbol).data_period, force_new=True).get_data()[-DATA_SIZE:]
         CONF.leverage = int(LEVERAGE.get())

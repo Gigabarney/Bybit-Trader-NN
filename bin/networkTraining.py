@@ -9,7 +9,7 @@ import pandas as pd
 from bin import bybitRun
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from bin import data_handler
+from bin import dataHandler
 from sklearn.preprocessing import MinMaxScaler
 import keras.losses
 import keras.backend
