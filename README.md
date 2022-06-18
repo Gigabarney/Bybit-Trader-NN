@@ -1,4 +1,5 @@
 # Bybit-Trader-NN
+#### Video Demo: https://youtu.be/6GfaZidsf3M
 
 ## Introduction
 
