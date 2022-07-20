@@ -5,7 +5,6 @@
 
 Bybit neural network trader is an automatic Cryptocurrency trading application. Automatically trading derivative "Inverse Perpetual" contracts on [Bybit](https://www.bybit.com/en-US/) with an easy to use GUI to keep track of your balance, and performance metrics.
 Contained in the GUI is also options to train new models with ability to change layer configurations.
-https://youtu.be/6GfaZidsf3M
 
 
 #### gui.py
