@@ -51,5 +51,7 @@ Start by running: *gui.py*
 - Incorporate an auto train function to automaticly retrain the model after *X* number of iterations or minutes
 - Add functions to withdraw funds to a wallet within the GUI
 - Have GUI be resizable
-- Add button to only display need-to-know information in a much smaller window 
+- Add button to only display need-to-know information in a much smaller window
+
+*Created by: Eric Kelm*
 
